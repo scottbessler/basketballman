@@ -2,10 +2,13 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use basketballman::config::{NBA_NICKNAMES, TEAM_SEEDS};
 use basketballman::generator::generate_league;
+use basketballman::models::GameResult;
 use basketballman::models::{Conference, GameStatus};
 use basketballman::repo::LeagueRepository;
 use basketballman::routes::{AppState, app};
-use basketballman::sim::{SimConfig, simulate_game};
+use basketballman::sim::{
+    GameEngine, PossessionEngine, RatingRollEngine, SimConfig, simulate_game, simulation_input,
+};
 use basketballman::stats::{player_season_stats, standings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -165,6 +168,26 @@ fn simulation_persists_one_positive_result_winner_and_player_stats() {
     let records = standings(&league);
     assert_eq!(records.values().map(|record| record.wins).sum::<u16>(), 1);
     assert_eq!(records.values().map(|record| record.losses).sum::<u16>(), 1);
+}
+
+#[test]
+fn game_engines_are_pure_over_scheduled_game_input() {
+    let league = generate_league(7);
+    let game = league.schedule[0].clone();
+    let input = simulation_input(&league, &game, SimConfig::default()).expect("input");
+    let rating = RatingRollEngine;
+    let possession = PossessionEngine;
+
+    let rating_first = rating.simulate(&input);
+    let rating_second = rating.simulate(&input);
+    let possession_result = possession.simulate(&input);
+
+    assert_eq!(rating_first, rating_second);
+    assert!(league.results.is_empty());
+    assert_eq!(league.schedule[0].status, GameStatus::Scheduled);
+    assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &rating_first);
+    assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &possession_result);
+    assert!(possession_result.team_stats.unwrap().possessions > 0);
 }
 
 #[test]
@@ -358,4 +381,24 @@ fn temp_path(name: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("basketballman-{nanos}-{name}"))
+}
+
+fn assert_valid_engine_result(home: &str, away: &str, result: &GameResult) {
+    assert!(result.home_score > 0);
+    assert!(result.away_score > 0);
+    assert!(result.winner_team_id == home || result.winner_team_id == away);
+    let lines = result.player_stats.as_ref().expect("player stats");
+    assert_eq!(lines.len(), 24);
+    let home_points: u16 = lines
+        .iter()
+        .filter(|line| line.team_id == home)
+        .map(|line| line.points)
+        .sum();
+    let away_points: u16 = lines
+        .iter()
+        .filter(|line| line.team_id == away)
+        .map(|line| line.points)
+        .sum();
+    assert_eq!(home_points, result.home_score);
+    assert_eq!(away_points, result.away_score);
 }

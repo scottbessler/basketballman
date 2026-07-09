@@ -21,6 +21,8 @@ C13: player season stats ! aggregate from persisted game player stats; visible o
 C14: UI ! reuse `../lisports` dense sports table/stat styling, sortable numeric tables, compact nav.
 C15: league controls ! reset clears played games/results only; regen creates new generated league.
 C16: game page ! schedule game clickable; played game shows box score; unplayed game shows matchup + sim action.
+C17: sim engine ! pure function over scheduled game input; engine owns no league loading/persistence.
+C18: alt sim engine ! possession-by-possession engine chooses events from ratings, returns same `GameResult` contract.
 
 §I
 model: `League` → teams, players, schedule, results, config, seed.
@@ -29,12 +31,14 @@ model: `Player` → id, name, age, position, ratings, team_id.
 model: `Game` → id, season, date_index, home_team_id, away_team_id, status.
 model: `GameResult` → game_id, home_score, away_score, winner_team_id, team_stats?, player_stats?.
 model: `PlayerGameStats` → player_id, team_id, minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, fga, fgm, tpa, tpm, fta, ftm.
+model: `GameSimulationInput` → seed, scheduled `Game`, home/away teams, home/away players, config.
 view: standings → conference records + sim controls.
 view: player → profile + season stat table.
 view: game → matchup, final score?, player box score?, sim action?.
 svc: `generate_league(seed)` → `League`.
 svc: `generate_schedule(league_id, season)` → list `Game`.
-svc: `simulate_game(game_id, sim_config)` → `GameResult`.
+svc: `GameEngine::simulate(input)` → `GameResult`.
+svc: `simulate_game(game_id, engine, sim_config)` → loads input, invokes pure engine, persists externally.
 repo: save/load league state → durable local store.
 repo: reset league state → same teams/players/schedule ids; all games scheduled; results empty.
 repo: regenerate league state → new seed/config league; results empty.
@@ -76,6 +80,9 @@ V19: reset action → same team/player/game ids ∧ results empty ∧ all games 
 V20: regen action → fresh generated league ∧ results empty ∧ valid default shape.
 V21: game detail route → played game shows player box score; unplayed game shows no result.
 V22: ∀ schedule date_index → each team appears ≤ 1 game.
+V23: game engine simulate → pure over `GameSimulationInput`; no league load/save/mutation.
+V24: all game engines → same `GameResult` contract ∧ valid winner/player_stats/positive scores.
+V25: possession engine → team_stats.possessions > 0 ∧ player scoring sums to team scores.
 
 §T
 id|status|task|cites
@@ -97,6 +104,9 @@ T15|x|reuse lisports table/stat styling + sortable tables|C14,I.ui,V14
 T16|x|add reset + regen league controls|C15,I.web,I.repo,V13,V19,V20
 T17|x|add game detail page + clickable schedule games|C16,I.web,V14,V21
 T18|x|test reset/regen/box-score invariants|V13,V19,V20,V21
+T19|x|extract pure game engine interface + rating-roll engine|C17,I.model,I.svc,V23,V24
+T20|x|add possession-by-possession engine|C18,I.svc,V24,V25
+T21|x|wire web simulation through engine interface + tests|I.web,V10,V13,V23,V24,V25
 
 §B
 id|date|cause|fix
