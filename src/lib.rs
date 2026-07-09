@@ -5,3 +5,4 @@ pub mod repo;
 pub mod routes;
 pub mod schedule;
 pub mod sim;
+pub mod stats;

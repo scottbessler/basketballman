@@ -8,32 +8,38 @@
   <script type="module" src="/static/islands.js"></script>
 </head>
 <body>
-  <header class="topbar">
+  <nav class="nav">
     <a class="brand" href="/">Basketballman</a>
-    <nav>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
       <a href="/teams">Teams</a>
       <a href="/schedule">Schedule</a>
-    </nav>
-  </header>
-  <main class="shell">
-    <div class="section-head">
-      <h1>Teams</h1>
-      <input data-team-filter type="search" placeholder="Filter teams">
     </div>
-    <table data-filter-table>
-      <thead><tr><th>Team</th><th>Conference</th><th>Division</th><th>Roster</th><th>Rating</th></tr></thead>
-      <tbody>
-      {% for team in teams %}
-        <tr>
-          <td><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a></td>
-          <td>{{ team.conference }}</td>
-          <td>{{ team.division }}</td>
-          <td>{{ team.roster }}</td>
-          <td>{{ team.rating }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+  </nav>
+  <main class="page">
+    <section class="panel">
+      <div class="section-head">
+        <h1>Teams</h1>
+        <input data-team-filter type="search" placeholder="Filter teams">
+      </div>
+      <div class="table-wrap">
+        <table class="sortable" data-filter-table>
+          <thead><tr><th>Team</th><th>Conference</th><th>Division</th><th>Roster</th><th>Rating</th></tr></thead>
+          <tbody>
+          {% for team in teams %}
+            <tr>
+              <td><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a></td>
+              <td>{{ team.conference }}</td>
+              <td>{{ team.division }}</td>
+              <td>{{ team.roster }}</td>
+              <td>{{ team.rating }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </body>
 </html>

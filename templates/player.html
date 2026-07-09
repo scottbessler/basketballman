@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ player.name }} - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </div>
+  </nav>
+  <main class="page player">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow"><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a> · {{ player.position }}</p>
+        <h1>{{ player.name }}</h1>
+      </div>
+      <div class="status">OVR {{ player.overall }}</div>
+    </section>
+    <section class="stat-grid">
+      <div class="panel"><span>{{ player.points }}</span><label>Points</label></div>
+      <div class="panel"><span>{{ player.rebounds }}</span><label>Rebounds</label></div>
+      <div class="panel"><span>{{ player.assists }}</span><label>Assists</label></div>
+      <div class="panel"><span>{{ player.games }}</span><label>Games</label></div>
+    </section>
+    <section class="panel">
+      <h2>Season Stats</h2>
+      <div class="table-wrap">
+        <table class="sortable">
+          <thead><tr><th>Split</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>PF</th><th>FG</th><th>3PT</th><th>FT</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Season</td>
+              <td>{{ player.games }}</td>
+              <td>{{ player.minutes }}</td>
+              <td>{{ player.points }}</td>
+              <td>{{ player.rebounds }}</td>
+              <td>{{ player.assists }}</td>
+              <td>{{ player.steals }}</td>
+              <td>{{ player.blocks }}</td>
+              <td>{{ player.turnovers }}</td>
+              <td>{{ player.fouls }}</td>
+              <td>{{ player.fgm_fga }}</td>
+              <td>{{ player.tpm_tpa }}</td>
+              <td>{{ player.ftm_fta }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Ratings</h2>
+      <div class="table-wrap">
+        <table class="sortable">
+          <thead><tr><th>Off</th><th>Def</th><th>Shooting</th><th>Playmaking</th><th>Rebounding</th></tr></thead>
+          <tbody><tr><td>{{ player.offense }}</td><td>{{ player.defense }}</td><td>{{ player.shooting }}</td><td>{{ player.playmaking }}</td><td>{{ player.rebounding }}</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

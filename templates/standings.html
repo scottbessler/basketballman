@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Standings - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </div>
+  </nav>
+  <main class="page">
+    <section class="panel sim-panel">
+      <div>
+        <h1>Standings</h1>
+        <p class="muted">{{ played }} / {{ games }} games played · next day {{ next_day }}</p>
+      </div>
+      <div class="sim-actions">
+        <form method="post" action="/sim/day" data-sim-form><button type="submit">Sim Day</button></form>
+        <form method="post" action="/sim/week" data-sim-form><button type="submit">Sim Week</button></form>
+        <form method="post" action="/sim/month" data-sim-form><button type="submit">Sim Month</button></form>
+      </div>
+    </section>
+    <section class="standings">
+      <article class="panel">
+        <h2>East</h2>
+        <div class="table-wrap">
+          <table class="sortable" data-default-sort-index="1" data-default-sort-dir="desc">
+            <thead><tr><th>Team</th><th>W</th><th>L</th><th>Pct</th><th>PF</th><th>PA</th><th>Diff</th></tr></thead>
+            <tbody>
+            {% for row in east %}
+              <tr>
+                <td><a href="/teams/{{ row.team_id }}">{{ row.team }}</a></td>
+                <td>{{ row.wins }}</td>
+                <td>{{ row.losses }}</td>
+                <td>{{ row.pct }}</td>
+                <td>{{ row.points_for }}</td>
+                <td>{{ row.points_against }}</td>
+                <td>{{ row.diff }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </article>
+      <article class="panel">
+        <h2>West</h2>
+        <div class="table-wrap">
+          <table class="sortable" data-default-sort-index="1" data-default-sort-dir="desc">
+            <thead><tr><th>Team</th><th>W</th><th>L</th><th>Pct</th><th>PF</th><th>PA</th><th>Diff</th></tr></thead>
+            <tbody>
+            {% for row in west %}
+              <tr>
+                <td><a href="/teams/{{ row.team_id }}">{{ row.team }}</a></td>
+                <td>{{ row.wins }}</td>
+                <td>{{ row.losses }}</td>
+                <td>{{ row.pct }}</td>
+                <td>{{ row.points_for }}</td>
+                <td>{{ row.points_against }}</td>
+                <td>{{ row.diff }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

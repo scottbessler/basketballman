@@ -136,6 +136,12 @@ pub const TEAM_SEEDS: &[TeamSeed] = &[
         division: Division::Southeast,
     },
     TeamSeed {
+        city: "Pittsburgh",
+        name: "Iron",
+        conference: Conference::East,
+        division: Division::Central,
+    },
+    TeamSeed {
         city: "Denver",
         name: "Summits",
         conference: Conference::West,
@@ -224,6 +230,12 @@ pub const TEAM_SEEDS: &[TeamSeed] = &[
         name: "Missions",
         conference: Conference::West,
         division: Division::Southwest,
+    },
+    TeamSeed {
+        city: "Seattle",
+        name: "Sound",
+        conference: Conference::West,
+        division: Division::Northwest,
     },
 ];
 

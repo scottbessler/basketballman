@@ -8,46 +8,50 @@
   <script type="module" src="/static/islands.js"></script>
 </head>
 <body>
-  <header class="topbar">
+  <nav class="nav">
     <a class="brand" href="/">Basketballman</a>
-    <nav>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
       <a href="/teams">Teams</a>
       <a href="/schedule">Schedule</a>
-    </nav>
-  </header>
-  <main class="shell">
-    <section class="hero">
+    </div>
+  </nav>
+  <main class="page">
+    <section class="panel hero">
       <div>
         <p class="eyebrow">Season {{ season }}</p>
         <h1>{{ league_name }}</h1>
       </div>
-      <div class="meter">{{ played }} / {{ games }} games played</div>
+      <div class="status">{{ played }} / {{ games }} games played</div>
     </section>
     <section class="stat-grid">
-      <div><span>{{ teams }}</span><label>Teams</label></div>
-      <div><span>{{ players }}</span><label>Players</label></div>
-      <div><span>{{ games }}</span><label>Games</label></div>
-      <div><span>{{ played }}</span><label>Results</label></div>
+      <div class="panel"><span>{{ teams }}</span><label>Teams</label></div>
+      <div class="panel"><span>{{ players }}</span><label>Players</label></div>
+      <div class="panel"><span>{{ games }}</span><label>Games</label></div>
+      <div class="panel"><span>{{ played }}</span><label>Results</label></div>
     </section>
-    <section>
+    <section class="panel">
       <div class="section-head">
         <h2>Top Team Ratings</h2>
-        <a href="/teams">View all</a>
+        <a class="button" href="/standings">Standings</a>
       </div>
-      <table>
-        <thead><tr><th>Team</th><th>Conference</th><th>Division</th><th>Roster</th><th>Rating</th></tr></thead>
-        <tbody>
-        {% for team in leaders %}
-          <tr>
-            <td><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a></td>
-            <td>{{ team.conference }}</td>
-            <td>{{ team.division }}</td>
-            <td>{{ team.roster }}</td>
-            <td>{{ team.rating }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="sortable" data-default-sort-index="4" data-default-sort-dir="desc">
+          <thead><tr><th>Team</th><th>Conference</th><th>Division</th><th>Roster</th><th>Rating</th></tr></thead>
+          <tbody>
+          {% for team in leaders %}
+            <tr>
+              <td><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a></td>
+              <td>{{ team.conference }}</td>
+              <td>{{ team.division }}</td>
+              <td>{{ team.roster }}</td>
+              <td>{{ team.rating }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
 </body>

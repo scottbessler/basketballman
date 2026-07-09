@@ -143,7 +143,39 @@ pub struct TeamStats {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PlayerGameStats {
     pub player_id: PlayerId,
+    pub team_id: TeamId,
+    pub minutes: u16,
     pub points: u16,
     pub rebounds: u16,
     pub assists: u16,
+    pub steals: u16,
+    pub blocks: u16,
+    pub turnovers: u16,
+    pub fouls: u16,
+    pub field_goals_attempted: u16,
+    pub field_goals_made: u16,
+    pub three_pointers_attempted: u16,
+    pub three_pointers_made: u16,
+    pub free_throws_attempted: u16,
+    pub free_throws_made: u16,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlayerSeasonStats {
+    pub player_id: PlayerId,
+    pub games: u16,
+    pub minutes: u16,
+    pub points: u16,
+    pub rebounds: u16,
+    pub assists: u16,
+    pub steals: u16,
+    pub blocks: u16,
+    pub turnovers: u16,
+    pub fouls: u16,
+    pub field_goals_attempted: u16,
+    pub field_goals_made: u16,
+    pub three_pointers_attempted: u16,
+    pub three_pointers_made: u16,
+    pub free_throws_attempted: u16,
+    pub free_throws_made: u16,
 }

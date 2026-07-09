@@ -8,41 +8,54 @@
   <script type="module" src="/static/islands.js"></script>
 </head>
 <body>
-  <header class="topbar">
+  <nav class="nav">
     <a class="brand" href="/">Basketballman</a>
-    <nav>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
       <a href="/teams">Teams</a>
       <a href="/schedule">Schedule</a>
-    </nav>
-  </header>
-  <main class="shell">
-    <section class="hero compact">
+    </div>
+  </nav>
+  <main class="page player">
+    <section class="panel hero compact">
       <div>
         <p class="eyebrow">{{ team.conference }} / {{ team.division }}</p>
         <h1>{{ team.city }} {{ team.name }}</h1>
       </div>
-      <div class="meter">Rating {{ team.rating }}</div>
+      <div class="status">Rating {{ team.rating }}</div>
     </section>
-    <table>
-      <thead>
-        <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>Off</th><th>Def</th><th>Sht</th><th>Play</th><th>Reb</th></tr>
-      </thead>
-      <tbody>
-      {% for player in players %}
-        <tr>
-          <td>{{ player.name }}</td>
-          <td>{{ player.position }}</td>
-          <td>{{ player.age }}</td>
-          <td>{{ player.overall }}</td>
-          <td>{{ player.offense }}</td>
-          <td>{{ player.defense }}</td>
-          <td>{{ player.shooting }}</td>
-          <td>{{ player.playmaking }}</td>
-          <td>{{ player.rebounding }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <section class="panel">
+      <h2>Roster Season Stats</h2>
+      <div class="table-wrap">
+        <table class="sortable" data-default-sort-index="7" data-default-sort-dir="desc">
+          <thead>
+            <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>FG</th><th>3PT</th><th>FT</th></tr>
+          </thead>
+          <tbody>
+          {% for player in players %}
+            <tr>
+              <td><a href="/players/{{ player.id }}">{{ player.name }}</a></td>
+              <td>{{ player.position }}</td>
+              <td>{{ player.age }}</td>
+              <td>{{ player.overall }}</td>
+              <td>{{ player.games }}</td>
+              <td>{{ player.minutes }}</td>
+              <td>{{ player.points }}</td>
+              <td>{{ player.rebounds }}</td>
+              <td>{{ player.assists }}</td>
+              <td>{{ player.steals }}</td>
+              <td>{{ player.blocks }}</td>
+              <td>{{ player.turnovers }}</td>
+              <td>{{ player.fgm_fga }}</td>
+              <td>{{ player.tpm_tpa }}</td>
+              <td>{{ player.ftm_fta }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </body>
 </html>

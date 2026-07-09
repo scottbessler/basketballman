@@ -1,3 +1,4 @@
+use crate::config::TEAM_SEEDS;
 use crate::generator::generate_league;
 use crate::models::League;
 use std::fs;
@@ -25,7 +26,19 @@ impl LeagueRepository {
 
     pub fn load_or_generate(&self, seed: u64) -> Result<League, RepoError> {
         if self.path.exists() {
-            self.load()
+            let league = self.load()?;
+            if league.teams.len() == TEAM_SEEDS.len()
+                && league
+                    .schedule
+                    .iter()
+                    .all(|game| game.season == league.season)
+            {
+                Ok(league)
+            } else {
+                let league = generate_league(seed);
+                self.save(&league)?;
+                Ok(league)
+            }
         } else {
             let league = generate_league(seed);
             self.save(&league)?;
