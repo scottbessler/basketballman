@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ team.city }} {{ team.name }} - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Basketballman</a>
+    <nav>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="hero compact">
+      <div>
+        <p class="eyebrow">{{ team.conference }} / {{ team.division }}</p>
+        <h1>{{ team.city }} {{ team.name }}</h1>
+      </div>
+      <div class="meter">Rating {{ team.rating }}</div>
+    </section>
+    <table>
+      <thead>
+        <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>Off</th><th>Def</th><th>Sht</th><th>Play</th><th>Reb</th></tr>
+      </thead>
+      <tbody>
+      {% for player in players %}
+        <tr>
+          <td>{{ player.name }}</td>
+          <td>{{ player.position }}</td>
+          <td>{{ player.age }}</td>
+          <td>{{ player.overall }}</td>
+          <td>{{ player.offense }}</td>
+          <td>{{ player.defense }}</td>
+          <td>{{ player.shooting }}</td>
+          <td>{{ player.playmaking }}</td>
+          <td>{{ player.rebounding }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

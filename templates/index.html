@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ league_name }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Basketballman</a>
+    <nav>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Season {{ season }}</p>
+        <h1>{{ league_name }}</h1>
+      </div>
+      <div class="meter">{{ played }} / {{ games }} games played</div>
+    </section>
+    <section class="stat-grid">
+      <div><span>{{ teams }}</span><label>Teams</label></div>
+      <div><span>{{ players }}</span><label>Players</label></div>
+      <div><span>{{ games }}</span><label>Games</label></div>
+      <div><span>{{ played }}</span><label>Results</label></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Top Team Ratings</h2>
+        <a href="/teams">View all</a>
+      </div>
+      <table>
+        <thead><tr><th>Team</th><th>Conference</th><th>Division</th><th>Roster</th><th>Rating</th></tr></thead>
+        <tbody>
+        {% for team in leaders %}
+          <tr>
+            <td><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a></td>
+            <td>{{ team.conference }}</td>
+            <td>{{ team.division }}</td>
+            <td>{{ team.roster }}</td>
+            <td>{{ team.rating }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

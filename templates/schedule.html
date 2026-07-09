@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schedule - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Basketballman</a>
+    <nav>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <div class="section-head">
+      <h1>Schedule</h1>
+      <input data-team-filter type="search" placeholder="Filter games">
+    </div>
+    <table data-filter-table>
+      <thead><tr><th>Day</th><th>Away</th><th>Home</th><th>Status</th><th>Score</th><th></th></tr></thead>
+      <tbody>
+      {% for game in games %}
+        <tr>
+          <td>{{ game.date_index }}</td>
+          <td>{{ game.away }}</td>
+          <td>{{ game.home }}</td>
+          <td>{{ game.status }}</td>
+          <td>{{ game.score }}</td>
+          <td>
+            {% if game.played %}
+              <span class="pill">Final</span>
+            {% else %}
+              <form method="post" action="/games/{{ game.id }}/simulate" data-sim-form>
+                <button type="submit">Sim</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
