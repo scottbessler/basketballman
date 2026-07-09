@@ -30,8 +30,8 @@
           {% for game in games %}
             <tr>
               <td>{{ game.date_index }}</td>
-              <td>{{ game.away }}</td>
-              <td>{{ game.home }}</td>
+              <td><a href="/games/{{ game.id }}">{{ game.away }}</a></td>
+              <td><a href="/games/{{ game.id }}">{{ game.home }}</a></td>
               <td>{{ game.status }}</td>
               <td>{{ game.score }}</td>
               <td>

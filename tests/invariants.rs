@@ -178,6 +178,51 @@ fn repository_roundtrip_preserves_ids_and_results() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn repository_reset_preserves_ids_and_clears_games() {
+    let path = temp_path("reset.json");
+    let repo = LeagueRepository::new(&path);
+    let mut league = repo.load_or_generate(123).expect("generate");
+    let first_team_id = league.teams[0].id.clone();
+    let first_player_id = league.players[0].id.clone();
+    let first_game_id = league.schedule[0].id.clone();
+    simulate_game(&mut league, &first_game_id, SimConfig::default()).expect("simulate");
+
+    repo.reset(&mut league).expect("reset");
+
+    assert_eq!(league.teams[0].id, first_team_id);
+    assert_eq!(league.players[0].id, first_player_id);
+    assert_eq!(league.schedule[0].id, first_game_id);
+    assert!(league.results.is_empty());
+    assert!(
+        league
+            .schedule
+            .iter()
+            .all(|game| game.status == GameStatus::Scheduled)
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn repository_regen_creates_fresh_empty_league() {
+    let path = temp_path("regen.json");
+    let repo = LeagueRepository::new(&path);
+    let league = repo.load_or_generate(123).expect("generate");
+    let old_seed = league.seed;
+    let old_first_player = league.players[0].name.clone();
+
+    let next = repo.regenerate(old_seed).expect("regen");
+
+    assert_ne!(next.seed, old_seed);
+    assert_ne!(next.players[0].name, old_first_player);
+    assert_eq!(next.teams.len(), 32);
+    assert_eq!(next.schedule.len(), 1216);
+    assert!(next.results.is_empty());
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test]
 async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     let path = temp_path("web.json");
@@ -223,6 +268,22 @@ async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     let loaded = repo.load().expect("load");
     assert!(loaded.results.contains_key(&game_id));
 
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/games/{game_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(html.contains("Box Score"));
+    assert!(html.contains("PTS"));
+
     let player_id = loaded.players[0].id.clone();
     let response = app
         .clone()
@@ -237,6 +298,7 @@ async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -249,6 +311,37 @@ async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let loaded = repo.load().expect("load");
     assert!(loaded.results.len() > 1);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/league/reset")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let loaded = repo.load().expect("load");
+    assert!(loaded.results.is_empty());
+
+    let old_seed = loaded.seed;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/league/regen")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let loaded = repo.load().expect("load");
+    assert_ne!(loaded.seed, old_seed);
+    assert!(loaded.results.is_empty());
 
     let _ = std::fs::remove_file(path);
 }

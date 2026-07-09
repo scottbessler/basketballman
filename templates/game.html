@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ away }} at {{ home }} - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+    </div>
+  </nav>
+  <main class="page player">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">Day {{ date_index }} · {{ status }}</p>
+        <h1>{{ away }} at {{ home }}</h1>
+      </div>
+      <div class="scoreline">
+        <span>{{ away_score }}</span>
+        <span>{{ home_score }}</span>
+      </div>
+    </section>
+    {% if played %}
+      <section class="panel">
+        <h2>Box Score</h2>
+        <div class="table-wrap">
+          <table class="sortable" data-default-sort-index="4" data-default-sort-dir="desc">
+            <thead>
+              <tr><th>Team</th><th>Player</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>PF</th><th>FG</th><th>3PT</th><th>FT</th></tr>
+            </thead>
+            <tbody>
+            {% for row in box_score %}
+              <tr>
+                <td>{{ row.team }}</td>
+                <td><a href="/players/{{ row.player_id }}">{{ row.player }}</a></td>
+                <td>{{ row.minutes }}</td>
+                <td>{{ row.points }}</td>
+                <td>{{ row.rebounds }}</td>
+                <td>{{ row.assists }}</td>
+                <td>{{ row.steals }}</td>
+                <td>{{ row.blocks }}</td>
+                <td>{{ row.turnovers }}</td>
+                <td>{{ row.fouls }}</td>
+                <td>{{ row.fgm_fga }}</td>
+                <td>{{ row.tpm_tpa }}</td>
+                <td>{{ row.ftm_fta }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% else %}
+      <section class="panel">
+        <h2>Matchup</h2>
+        <p class="muted">No result yet.</p>
+        <form method="post" action="/games/{{ game_id }}/simulate" data-sim-form>
+          <button type="submit">Sim Game</button>
+        </form>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

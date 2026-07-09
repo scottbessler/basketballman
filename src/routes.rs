@@ -1,4 +1,7 @@
-use crate::models::{Conference, GameStatus, League, Player, PlayerSeasonStats, Position, Team};
+use crate::models::{
+    Conference, Game, GameResult, GameStatus, League, Player, PlayerGameStats, PlayerSeasonStats,
+    Position, Team,
+};
 use crate::repo::LeagueRepository;
 use crate::sim::{SimConfig, simulate_game, team_rating};
 use crate::stats::{next_unplayed_date_indices, player_season_stats, standings};
@@ -24,10 +27,13 @@ pub fn app(state: AppState) -> Router {
         .route("/teams/{id}", get(team_detail))
         .route("/players/{id}", get(player_detail))
         .route("/schedule", get(schedule))
+        .route("/games/{id}", get(game_detail))
         .route("/games/{id}/simulate", post(simulate))
         .route("/sim/day", post(sim_day))
         .route("/sim/week", post(sim_week))
         .route("/sim/month", post(sim_month))
+        .route("/league/reset", post(reset_league))
+        .route("/league/regen", post(regen_league))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
 }
@@ -68,10 +74,31 @@ async fn schedule(State(state): State<AppState>) -> Response {
     render(ScheduleTemplate::from_league(&league))
 }
 
+async fn game_detail(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let league = state.league.lock().expect("league lock").clone();
+    match GameTemplate::from_league(&league, &id) {
+        Some(template) => render(template),
+        None => (axum::http::StatusCode::NOT_FOUND, "game not found").into_response(),
+    }
+}
+
 async fn simulate(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    persist_simulation(state, |league| {
-        simulate_game(league, &id, SimConfig::default());
-    })
+    let mut league = state.league.lock().expect("league lock");
+    let game_exists = league.schedule.iter().any(|game| game.id == id);
+    if !game_exists {
+        return (axum::http::StatusCode::NOT_FOUND, "game not found").into_response();
+    }
+    {
+        simulate_game(&mut league, &id, SimConfig::default());
+    }
+    if let Err(error) = state.repo.save(&league) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("save failed: {error}"),
+        )
+            .into_response();
+    }
+    Redirect::to(&format!("/games/{id}")).into_response()
 }
 
 async fn sim_day(State(state): State<AppState>) -> Response {
@@ -84,6 +111,33 @@ async fn sim_week(State(state): State<AppState>) -> Response {
 
 async fn sim_month(State(state): State<AppState>) -> Response {
     persist_simulation(state, |league| simulate_next_dates(league, 30))
+}
+
+async fn reset_league(State(state): State<AppState>) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    if let Err(error) = state.repo.reset(&mut league) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("reset failed: {error}"),
+        )
+            .into_response();
+    }
+    Redirect::to("/standings").into_response()
+}
+
+async fn regen_league(State(state): State<AppState>) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    match state.repo.regenerate(league.seed) {
+        Ok(next) => {
+            *league = next;
+            Redirect::to("/standings").into_response()
+        }
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("regen failed: {error}"),
+        )
+            .into_response(),
+    }
 }
 
 fn persist_simulation(state: AppState, mutate: impl FnOnce(&mut League)) -> Response {
@@ -279,6 +333,53 @@ impl PlayerTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "game.html")]
+struct GameTemplate {
+    game_id: String,
+    date_index: u16,
+    away: String,
+    home: String,
+    away_score: String,
+    home_score: String,
+    status: String,
+    played: bool,
+    box_score: Vec<BoxScoreRow>,
+}
+
+impl GameTemplate {
+    fn from_league(league: &League, id: &str) -> Option<Self> {
+        let game = league.schedule.iter().find(|game| game.id == id)?;
+        let home = league
+            .teams
+            .iter()
+            .find(|team| team.id == game.home_team_id)?;
+        let away = league
+            .teams
+            .iter()
+            .find(|team| team.id == game.away_team_id)?;
+        let result = league.results.get(&game.id);
+        Some(Self {
+            game_id: game.id.clone(),
+            date_index: game.date_index,
+            away: format!("{} {}", away.city, away.name),
+            home: format!("{} {}", home.city, home.name),
+            away_score: result
+                .map(|result| result.away_score.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            home_score: result
+                .map(|result| result.home_score.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            status: game_status(game, result),
+            played: game.status == GameStatus::Played,
+            box_score: result
+                .and_then(|result| result.player_stats.as_ref())
+                .map(|lines| box_score_rows(league, lines))
+                .unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Template)]
 #[template(path = "schedule.html")]
 struct ScheduleTemplate {
     games: Vec<GameRow>,
@@ -449,6 +550,61 @@ struct GameRow {
     status: String,
     score: String,
     played: bool,
+}
+
+struct BoxScoreRow {
+    team: String,
+    player_id: String,
+    player: String,
+    minutes: u16,
+    points: u16,
+    rebounds: u16,
+    assists: u16,
+    steals: u16,
+    blocks: u16,
+    turnovers: u16,
+    fouls: u16,
+    fgm_fga: String,
+    tpm_tpa: String,
+    ftm_fta: String,
+}
+
+fn box_score_rows(league: &League, lines: &[PlayerGameStats]) -> Vec<BoxScoreRow> {
+    let mut rows: Vec<BoxScoreRow> = lines
+        .iter()
+        .filter_map(|line| {
+            let player = league
+                .players
+                .iter()
+                .find(|player| player.id == line.player_id)?;
+            let team = league.teams.iter().find(|team| team.id == line.team_id)?;
+            Some(BoxScoreRow {
+                team: format!("{} {}", team.city, team.name),
+                player_id: player.id.clone(),
+                player: player.name.clone(),
+                minutes: line.minutes,
+                points: line.points,
+                rebounds: line.rebounds,
+                assists: line.assists,
+                steals: line.steals,
+                blocks: line.blocks,
+                turnovers: line.turnovers,
+                fouls: line.fouls,
+                fgm_fga: made_attempted(line.field_goals_made, line.field_goals_attempted),
+                tpm_tpa: made_attempted(line.three_pointers_made, line.three_pointers_attempted),
+                ftm_fta: made_attempted(line.free_throws_made, line.free_throws_attempted),
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.team.cmp(&b.team).then_with(|| b.minutes.cmp(&a.minutes)));
+    rows
+}
+
+fn game_status(game: &Game, result: Option<&GameResult>) -> String {
+    match (game.status, result) {
+        (GameStatus::Played, Some(_)) => "Final".to_string(),
+        _ => "Scheduled".to_string(),
+    }
 }
 
 fn made_attempted(made: u16, attempted: u16) -> String {

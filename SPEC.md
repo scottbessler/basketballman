@@ -19,6 +19,8 @@ C11: fake team names ! avoid real NBA nicknames/logos/marks.
 C12: standings page ! show records + sim day/week/month controls.
 C13: player season stats ! aggregate from persisted game player stats; visible on team + player pages.
 C14: UI ! reuse `../lisports` dense sports table/stat styling, sortable numeric tables, compact nav.
+C15: league controls ! reset clears played games/results only; regen creates new generated league.
+C16: game page ! schedule game clickable; played game shows box score; unplayed game shows matchup + sim action.
 
 §I
 model: `League` → teams, players, schedule, results, config, seed.
@@ -29,20 +31,26 @@ model: `GameResult` → game_id, home_score, away_score, winner_team_id, team_st
 model: `PlayerGameStats` → player_id, team_id, minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, fga, fgm, tpa, tpm, fta, ftm.
 view: standings → conference records + sim controls.
 view: player → profile + season stat table.
+view: game → matchup, final score?, player box score?, sim action?.
 svc: `generate_league(seed)` → `League`.
 svc: `generate_schedule(league_id, season)` → list `Game`.
 svc: `simulate_game(game_id, sim_config)` → `GameResult`.
 repo: save/load league state → durable local store.
+repo: reset league state → same teams/players/schedule ids; all games scheduled; results empty.
+repo: regenerate league state → new seed/config league; results empty.
 web: GET `/` → dashboard.
 web: GET `/teams` → team list.
 web: GET `/teams/:id` → roster + ratings.
 web: GET `/schedule` → schedule + game status.
+web: GET `/games/:id` → game detail + box score when played.
 web: GET `/standings` → standings + sim day/week/month controls.
 web: GET `/players/:id` → player profile + season stats.
 web: POST `/games/:id/simulate` → sim one game, persist result, redirect/render.
 web: POST `/sim/day` → sim next unplayed date_index, persist, redirect standings.
 web: POST `/sim/week` → sim next 7 unplayed date_index values, persist, redirect standings.
 web: POST `/sim/month` → sim next 30 unplayed date_index values, persist, redirect standings.
+web: POST `/league/reset` → clear results + mark schedule unplayed, persist, redirect standings.
+web: POST `/league/regen` → generate new league, persist, redirect standings.
 ui: Preact islands → filters, table sorting, simulate buttons/progress.
 
 §V
@@ -64,6 +72,9 @@ V15: simulated game → player_stats exists ∧ covers both active rosters.
 V16: player season stats = sum(player_stats for persisted results).
 V17: standings record = wins/losses from persisted results.
 V18: sim range action → sims only scheduled games in next requested unplayed date_index window.
+V19: reset action → same team/player/game ids ∧ results empty ∧ all games scheduled.
+V20: regen action → fresh generated league ∧ results empty ∧ valid default shape.
+V21: game detail route → played game shows player box score; unplayed game shows no result.
 
 §T
 id|status|task|cites
@@ -82,6 +93,9 @@ T12|x|add player game stats + season aggregates|C6,C13,I.model,V10,V15,V16
 T13|x|add standings + sim day/week/month actions|C12,I.web,V13,V17,V18
 T14|x|add player pages + team season stat tables|C13,I.web,V14,V16
 T15|x|reuse lisports table/stat styling + sortable tables|C14,I.ui,V14
+T16|x|add reset + regen league controls|C15,I.web,I.repo,V13,V19,V20
+T17|x|add game detail page + clickable schedule games|C16,I.web,V14,V21
+T18|x|test reset/regen/box-score invariants|V13,V19,V20,V21
 
 §B
 id|date|cause|fix

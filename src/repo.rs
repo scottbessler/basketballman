@@ -1,6 +1,6 @@
 use crate::config::TEAM_SEEDS;
 use crate::generator::generate_league;
-use crate::models::League;
+use crate::models::{GameStatus, League};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -62,6 +62,20 @@ impl LeagueRepository {
         let body = serde_json::to_string_pretty(league)?;
         fs::write(&self.path, body)?;
         Ok(())
+    }
+
+    pub fn reset(&self, league: &mut League) -> Result<(), RepoError> {
+        league.results.clear();
+        for game in &mut league.schedule {
+            game.status = GameStatus::Scheduled;
+        }
+        self.save(league)
+    }
+
+    pub fn regenerate(&self, current_seed: u64) -> Result<League, RepoError> {
+        let league = generate_league(current_seed.wrapping_add(1));
+        self.save(&league)?;
+        Ok(league)
     }
 
     pub fn path(&self) -> &Path {
