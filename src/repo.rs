@@ -1,6 +1,7 @@
 use crate::config::TEAM_SEEDS;
 use crate::generator::generate_league;
 use crate::models::{GameStatus, League};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,12 +28,7 @@ impl LeagueRepository {
     pub fn load_or_generate(&self, seed: u64) -> Result<League, RepoError> {
         if self.path.exists() {
             let league = self.load()?;
-            if league.teams.len() == TEAM_SEEDS.len()
-                && league
-                    .schedule
-                    .iter()
-                    .all(|game| game.season == league.season)
-            {
+            if league_shape_valid(&league) {
                 Ok(league)
             } else {
                 let league = generate_league(seed);
@@ -81,4 +77,25 @@ impl LeagueRepository {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn league_shape_valid(league: &League) -> bool {
+    league.teams.len() == TEAM_SEEDS.len()
+        && league.schedule.len() == 1216
+        && league
+            .schedule
+            .iter()
+            .all(|game| game.season == league.season)
+        && schedule_dates_have_unique_teams(league)
+}
+
+fn schedule_dates_have_unique_teams(league: &League) -> bool {
+    let mut teams_by_date: BTreeMap<u16, BTreeSet<&str>> = BTreeMap::new();
+    for game in &league.schedule {
+        let teams = teams_by_date.entry(game.date_index).or_default();
+        if !teams.insert(game.home_team_id.as_str()) || !teams.insert(game.away_team_id.as_str()) {
+            return false;
+        }
+    }
+    true
 }

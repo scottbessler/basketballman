@@ -72,6 +72,7 @@ fn generated_schedule_has_valid_games_and_76_per_team() {
         team_ids.iter().map(|id| (*id, 0)).collect();
     let mut other_conference_counts: BTreeMap<&str, usize> =
         team_ids.iter().map(|id| (*id, 0)).collect();
+    let mut teams_by_date: BTreeMap<u16, BTreeSet<&str>> = BTreeMap::new();
 
     assert_eq!(league.schedule.len(), 1216);
     assert_eq!(game_ids.len(), league.schedule.len());
@@ -92,6 +93,9 @@ fn generated_schedule_has_valid_games_and_76_per_team() {
         assert!(team_ids.contains(game.home_team_id.as_str()));
         assert!(team_ids.contains(game.away_team_id.as_str()));
         assert_eq!(game.status, GameStatus::Scheduled);
+        let date_teams = teams_by_date.entry(game.date_index).or_default();
+        assert!(date_teams.insert(game.home_team_id.as_str()));
+        assert!(date_teams.insert(game.away_team_id.as_str()));
         *counts.get_mut(game.home_team_id.as_str()).unwrap() += 1;
         *counts.get_mut(game.away_team_id.as_str()).unwrap() += 1;
         if home.conference == away.conference {
@@ -114,6 +118,8 @@ fn generated_schedule_has_valid_games_and_76_per_team() {
     assert!(counts.values().all(|count| *count == 76));
     assert!(same_conference_counts.values().all(|count| *count == 60));
     assert!(other_conference_counts.values().all(|count| *count == 16));
+    assert_eq!(teams_by_date.len(), 76);
+    assert!(teams_by_date.values().all(|teams| teams.len() == 32));
 }
 
 #[test]

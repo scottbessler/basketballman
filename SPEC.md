@@ -75,6 +75,7 @@ V18: sim range action → sims only scheduled games in next requested unplayed d
 V19: reset action → same team/player/game ids ∧ results empty ∧ all games scheduled.
 V20: regen action → fresh generated league ∧ results empty ∧ valid default shape.
 V21: game detail route → played game shows player box score; unplayed game shows no result.
+V22: ∀ schedule date_index → each team appears ≤ 1 game.
 
 §T
 id|status|task|cites
@@ -99,3 +100,4 @@ T18|x|test reset/regen/box-score invariants|V13,V19,V20,V21
 
 §B
 id|date|cause|fix
+B1|2026-07-09|date_index assigned by raw 16-game chunks, not daily matchings|V22
