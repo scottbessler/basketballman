@@ -6,9 +6,7 @@ use basketballman::models::{Conference, GameStatus};
 use basketballman::models::{GameResult, PlayerGameStats};
 use basketballman::repo::LeagueRepository;
 use basketballman::routes::{AppState, app};
-use basketballman::sim::{
-    GameEngine, PossessionEngine, RatingRollEngine, SimConfig, simulate_game, simulation_input,
-};
+use basketballman::sim::{PossessionEngine, SimConfig, simulate_game, simulation_input};
 use basketballman::stats::{player_season_stats, standings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -229,37 +227,31 @@ fn possession_minutes_follow_on_floor_rotation() {
 }
 
 #[test]
-fn game_engines_are_pure_over_scheduled_game_input() {
+fn possession_engine_is_pure_over_scheduled_game_input() {
     let league = generate_league(7);
     let game = league.schedule[0].clone();
     let input = simulation_input(&league, &game, SimConfig::default()).expect("input");
-    let rating = RatingRollEngine;
     let possession = PossessionEngine;
 
-    let rating_first = rating.simulate(&input);
-    let rating_second = rating.simulate(&input);
+    let possession_first = possession.simulate(&input);
+    let possession_second = possession.simulate(&input);
     let possession_result = possession.simulate(&input);
 
-    assert_eq!(rating_first, rating_second);
+    assert_eq!(possession_first, possession_second);
     assert!(league.results.is_empty());
     assert_eq!(league.schedule[0].status, GameStatus::Scheduled);
-    assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &rating_first);
     assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &possession_result);
     assert!(possession_result.team_stats.unwrap().possessions > 0);
 }
 
 #[test]
-fn both_engines_conserve_plus_minus_by_team() {
+fn possession_engine_conserves_plus_minus_by_team() {
     let league = generate_league(7);
     let game = league.schedule[0].clone();
     let input = simulation_input(&league, &game, SimConfig::default()).expect("input");
 
-    for result in [
-        RatingRollEngine.simulate(&input),
-        PossessionEngine.simulate(&input),
-    ] {
-        assert_plus_minus_invariant(&game.home_team_id, &game.away_team_id, &result);
-    }
+    let result = PossessionEngine.simulate(&input);
+    assert_plus_minus_invariant(&game.home_team_id, &game.away_team_id, &result);
 }
 
 #[test]
