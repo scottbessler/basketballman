@@ -42,7 +42,7 @@ function applySort(table, index, direction) {
   header.dataset.sortDir = direction;
   header.setAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
 
-  const rows = Array.from(body.rows);
+  const rows = Array.from(body.rows).filter((row) => !row.dataset.sortIgnore);
   rows.sort((a, b) => {
     const left = valueFor(a.cells[index]);
     const right = valueFor(b.cells[index]);

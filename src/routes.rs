@@ -349,7 +349,7 @@ struct GameTemplate {
     home_score: String,
     status: String,
     played: bool,
-    box_score: Vec<BoxScoreRow>,
+    teams: Vec<BoxScoreTeam>,
 }
 
 impl GameTemplate {
@@ -364,6 +364,9 @@ impl GameTemplate {
             .iter()
             .find(|team| team.id == game.away_team_id)?;
         let result = league.results.get(&game.id);
+        let player_lines = result
+            .and_then(|result| result.player_stats.as_deref())
+            .unwrap_or_default();
         Some(Self {
             game_id: game.id.clone(),
             date_index: game.date_index,
@@ -377,10 +380,22 @@ impl GameTemplate {
                 .unwrap_or_else(|| "-".to_string()),
             status: game_status(game, result),
             played: game.status == GameStatus::Played,
-            box_score: result
-                .and_then(|result| result.player_stats.as_ref())
-                .map(|lines| box_score_rows(league, lines))
-                .unwrap_or_default(),
+            teams: vec![
+                box_score_team(
+                    league,
+                    away,
+                    result.map(|result| result.away_score).unwrap_or_default(),
+                    result.is_some_and(|result| result.winner_team_id == away.id),
+                    player_lines,
+                ),
+                box_score_team(
+                    league,
+                    home,
+                    result.map(|result| result.home_score).unwrap_or_default(),
+                    result.is_some_and(|result| result.winner_team_id == home.id),
+                    player_lines,
+                ),
+            ],
         })
     }
 }
@@ -559,7 +574,6 @@ struct GameRow {
 }
 
 struct BoxScoreRow {
-    team: String,
     player_id: String,
     player: String,
     minutes: u16,
@@ -575,17 +589,44 @@ struct BoxScoreRow {
     ftm_fta: String,
 }
 
-fn box_score_rows(league: &League, lines: &[PlayerGameStats]) -> Vec<BoxScoreRow> {
+struct BoxScoreTotals {
+    minutes: u16,
+    points: u16,
+    rebounds: u16,
+    assists: u16,
+    fgm_fga: String,
+    tpm_tpa: String,
+    ftm_fta: String,
+    turnovers: u16,
+    steals: u16,
+    blocks: u16,
+    fouls: u16,
+}
+
+struct BoxScoreTeam {
+    name: String,
+    score: u16,
+    winner: bool,
+    rows: Vec<BoxScoreRow>,
+    totals: BoxScoreTotals,
+}
+
+fn box_score_team(
+    league: &League,
+    team: &Team,
+    score: u16,
+    winner: bool,
+    lines: &[PlayerGameStats],
+) -> BoxScoreTeam {
     let mut rows: Vec<BoxScoreRow> = lines
         .iter()
+        .filter(|line| line.team_id == team.id)
         .filter_map(|line| {
             let player = league
                 .players
                 .iter()
                 .find(|player| player.id == line.player_id)?;
-            let team = league.teams.iter().find(|team| team.id == line.team_id)?;
             Some(BoxScoreRow {
-                team: format!("{} {}", team.city, team.name),
                 player_id: player.id.clone(),
                 player: player.name.clone(),
                 minutes: line.minutes,
@@ -602,8 +643,54 @@ fn box_score_rows(league: &League, lines: &[PlayerGameStats]) -> Vec<BoxScoreRow
             })
         })
         .collect();
-    rows.sort_by(|a, b| a.team.cmp(&b.team).then_with(|| b.minutes.cmp(&a.minutes)));
-    rows
+    rows.sort_by_key(|row| Reverse(row.minutes));
+
+    let mut totals = BoxScoreTotals {
+        minutes: 0,
+        points: 0,
+        rebounds: 0,
+        assists: 0,
+        fgm_fga: String::new(),
+        tpm_tpa: String::new(),
+        ftm_fta: String::new(),
+        turnovers: 0,
+        steals: 0,
+        blocks: 0,
+        fouls: 0,
+    };
+    let mut field_goals_made = 0;
+    let mut field_goals_attempted = 0;
+    let mut three_pointers_made = 0;
+    let mut three_pointers_attempted = 0;
+    let mut free_throws_made = 0;
+    let mut free_throws_attempted = 0;
+    for line in lines.iter().filter(|line| line.team_id == team.id) {
+        totals.minutes += line.minutes;
+        totals.points += line.points;
+        totals.rebounds += line.rebounds;
+        totals.assists += line.assists;
+        totals.turnovers += line.turnovers;
+        totals.steals += line.steals;
+        totals.blocks += line.blocks;
+        totals.fouls += line.fouls;
+        field_goals_made += line.field_goals_made;
+        field_goals_attempted += line.field_goals_attempted;
+        three_pointers_made += line.three_pointers_made;
+        three_pointers_attempted += line.three_pointers_attempted;
+        free_throws_made += line.free_throws_made;
+        free_throws_attempted += line.free_throws_attempted;
+    }
+    totals.fgm_fga = made_attempted(field_goals_made, field_goals_attempted);
+    totals.tpm_tpa = made_attempted(three_pointers_made, three_pointers_attempted);
+    totals.ftm_fta = made_attempted(free_throws_made, free_throws_attempted);
+
+    BoxScoreTeam {
+        name: format!("{} {}", team.city, team.name),
+        score,
+        winner,
+        rows,
+        totals,
+    }
 }
 
 fn game_status(game: &Game, result: Option<&GameResult>) -> String {
