@@ -42,7 +42,9 @@ function applySort(table, index, direction) {
   header.dataset.sortDir = direction;
   header.setAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
 
-  const rows = Array.from(body.rows).filter((row) => !row.dataset.sortIgnore);
+  const allRows = Array.from(body.rows);
+  const ignoredRows = allRows.filter((row) => row.dataset.sortIgnore);
+  const rows = allRows.filter((row) => !row.dataset.sortIgnore);
   rows.sort((a, b) => {
     const left = valueFor(a.cells[index]);
     const right = valueFor(b.cells[index]);
@@ -54,6 +56,7 @@ function applySort(table, index, direction) {
     return direction === "asc" ? result : -result;
   });
   rows.forEach((row) => body.appendChild(row));
+  ignoredRows.forEach((row) => body.appendChild(row));
 }
 
 function attachSort() {
