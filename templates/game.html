@@ -37,7 +37,7 @@
             <div class="table-wrap">
               <table class="sortable box-score-table" data-default-sort-index="5" data-default-sort-dir="desc">
                 <thead>
-                  <tr><th>Name</th><th>MIN</th><th>PTS</th><th>RB</th><th>AS</th><th>PIE</th><th>FG</th><th>3P</th><th>FT</th><th>PPS</th><th>TO</th><th>ST</th><th>BK</th><th>PF</th><th>USG</th></tr>
+                  <tr><th>Name</th><th>MIN</th><th>PTS</th><th>RB</th><th>AS</th><th>PIE</th><th>FG</th><th>3P</th><th>FT</th><th>PPS</th><th>TO</th><th>ST</th><th>BK</th><th>PF</th><th>+/-</th><th>USG</th></tr>
                 </thead>
                 <tbody>
                 {% for row in team.rows %}
@@ -56,6 +56,7 @@
                     <td>{{ row.steals }}</td>
                     <td>{{ row.blocks }}</td>
                     <td>{{ row.fouls }}</td>
+                    <td>{{ row.plus_minus }}</td>
                     <td>{{ row.usg }}</td>
                   </tr>
                 {% endfor %}
@@ -74,6 +75,7 @@
                     <td>{{ team.totals.steals }}</td>
                     <td>{{ team.totals.blocks }}</td>
                     <td>{{ team.totals.fouls }}</td>
+                    <td></td>
                     <td></td>
                   </tr>
                 </tbody>

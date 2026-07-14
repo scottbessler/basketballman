@@ -144,6 +144,8 @@ pub struct TeamStats {
 pub struct PlayerGameStats {
     pub player_id: PlayerId,
     pub team_id: TeamId,
+    #[serde(default)]
+    pub plus_minus: i16,
     pub minutes: u16,
     pub points: u16,
     pub rebounds: u16,

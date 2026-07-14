@@ -142,6 +142,8 @@ impl GameEngine for RatingRollEngine {
             away_score as u16,
             &mut rng,
         ));
+        let (home_lines, away_lines) = player_stats.split_at_mut(input.home_players.len());
+        apply_synthetic_plus_minus(home_lines, away_lines, home_score - away_score);
 
         result_from_scores(
             input,
@@ -176,7 +178,7 @@ impl GameEngine for PossessionEngine {
         for _ in 0..possessions {
             credit_floor_time(&home_lineup, &mut home_seconds, seconds_per_iteration);
             credit_floor_time(&away_lineup, &mut away_seconds, seconds_per_iteration);
-            home_score += simulate_possession(
+            let home_points = simulate_possession(
                 &input.home_players,
                 &home_lineup,
                 &input.away_players,
@@ -185,7 +187,16 @@ impl GameEngine for PossessionEngine {
                 input.config.home_advantage,
                 &mut rng,
             );
-            away_score += simulate_possession(
+            apply_possession_plus_minus(
+                &mut home_lines,
+                &home_lineup,
+                &mut away_lines,
+                &away_lineup,
+                home_points,
+                0,
+            );
+            home_score += home_points;
+            let away_points = simulate_possession(
                 &input.away_players,
                 &away_lineup,
                 &input.home_players,
@@ -194,6 +205,15 @@ impl GameEngine for PossessionEngine {
                 0,
                 &mut rng,
             );
+            apply_possession_plus_minus(
+                &mut home_lines,
+                &home_lineup,
+                &mut away_lines,
+                &away_lineup,
+                0,
+                away_points,
+            );
+            away_score += away_points;
             substitute(
                 &mut home_lineup,
                 &home_seconds,
@@ -214,9 +234,25 @@ impl GameEngine for PossessionEngine {
         if home_score == away_score {
             if rng.gen_bool(0.5) {
                 add_points_to_best(&mut home_lines, 1);
+                apply_possession_plus_minus(
+                    &mut home_lines,
+                    &home_lineup,
+                    &mut away_lines,
+                    &away_lineup,
+                    1,
+                    0,
+                );
                 home_score += 1;
             } else {
                 add_points_to_best(&mut away_lines, 1);
+                apply_possession_plus_minus(
+                    &mut home_lines,
+                    &home_lineup,
+                    &mut away_lines,
+                    &away_lineup,
+                    0,
+                    1,
+                );
                 away_score += 1;
             }
         }
@@ -306,6 +342,72 @@ fn result_from_scores(
     }
 }
 
+fn apply_possession_plus_minus(
+    home_lines: &mut [PlayerGameStats],
+    home_lineup: &[usize],
+    away_lines: &mut [PlayerGameStats],
+    away_lineup: &[usize],
+    home_points: u16,
+    away_points: u16,
+) {
+    let home_delta = home_points as i16 - away_points as i16;
+    let away_delta = -home_delta;
+    for index in home_lineup {
+        home_lines[*index].plus_minus += home_delta;
+    }
+    for index in away_lineup {
+        away_lines[*index].plus_minus += away_delta;
+    }
+}
+
+fn apply_synthetic_plus_minus(
+    home_lines: &mut [PlayerGameStats],
+    away_lines: &mut [PlayerGameStats],
+    margin: i16,
+) {
+    let home_stints = synthetic_stints(home_lines);
+    let away_stints = synthetic_stints(away_lines);
+    let stint_differentials = distribute_stint_differential(margin);
+    for ((home_lineup, away_lineup), differential) in home_stints
+        .iter()
+        .zip(away_stints.iter())
+        .zip(stint_differentials)
+    {
+        for index in home_lineup {
+            home_lines[*index].plus_minus += differential;
+        }
+        for index in away_lineup {
+            away_lines[*index].plus_minus -= differential;
+        }
+    }
+}
+
+fn synthetic_stints(lines: &[PlayerGameStats]) -> Vec<[usize; 5]> {
+    let mut remaining: Vec<u16> = lines.iter().map(|line| line.minutes).collect();
+    (0..48)
+        .map(|_| {
+            let mut indices: Vec<usize> = (0..remaining.len()).collect();
+            indices.sort_by_key(|index| (std::cmp::Reverse(remaining[*index]), *index));
+            let mut lineup = [0; 5];
+            for (slot, index) in indices.into_iter().take(5).enumerate() {
+                lineup[slot] = index;
+                remaining[index] = remaining[index].saturating_sub(1);
+            }
+            lineup
+        })
+        .collect()
+}
+
+fn distribute_stint_differential(margin: i16) -> Vec<i16> {
+    let base = margin / 48;
+    let remainder = margin % 48;
+    let extra = remainder.unsigned_abs() as usize;
+    let sign = remainder.signum();
+    (0..48)
+        .map(|index| base + if index < extra { sign } else { 0 })
+        .collect()
+}
+
 fn simulate_team_player_stats(
     team: &Team,
     players: &[&Player],
@@ -349,6 +451,7 @@ fn simulate_team_player_stats(
             PlayerGameStats {
                 player_id: player.id.clone(),
                 team_id: team.id.clone(),
+                plus_minus: 0,
                 minutes: minutes[index],
                 points: pts,
                 rebounds: stat_from_rating(player.ratings.rebounding, minutes[index], 2, 12, rng),
@@ -374,6 +477,7 @@ fn empty_player_lines(team: &Team, players: &[&Player]) -> Vec<PlayerGameStats> 
         .map(|player| PlayerGameStats {
             player_id: player.id.clone(),
             team_id: team.id.clone(),
+            plus_minus: 0,
             minutes: 0,
             points: 0,
             rebounds: 0,
