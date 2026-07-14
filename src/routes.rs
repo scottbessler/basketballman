@@ -21,6 +21,7 @@ pub struct AppState {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .route("/healthcheck", get(healthcheck))
         .route("/", get(index))
         .route("/standings", get(standings_page))
         .route("/teams", get(teams))
@@ -36,6 +37,10 @@ pub fn app(state: AppState) -> Router {
         .route("/league/regen", post(regen_league))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
+}
+
+async fn healthcheck() -> &'static str {
+    "ok"
 }
 
 async fn index(State(state): State<AppState>) -> Response {

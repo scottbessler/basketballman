@@ -1,0 +1,12 @@
+/node_modules
+/target
+*.log
+.DS_Store
+.env
+/.cache
+/public/build
+/build
+/data
+
+.yarn/cache
+.yarn/install-state.gz
