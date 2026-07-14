@@ -10,6 +10,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use std::cmp::Reverse;
 use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
 
@@ -22,6 +23,7 @@ pub struct AppState {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/healthcheck", get(healthcheck))
         .route("/standings", get(standings_page))
         .route("/teams", get(teams))
         .route("/teams/{id}", get(team_detail))
@@ -36,6 +38,10 @@ pub fn app(state: AppState) -> Router {
         .route("/league/regen", post(regen_league))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
+}
+
+async fn healthcheck() -> &'static str {
+    "OK"
 }
 
 async fn index(State(state): State<AppState>) -> Response {
@@ -196,7 +202,7 @@ impl IndexTemplate {
             .iter()
             .map(|team| TeamRow::from_team(league, team))
             .collect();
-        leaders.sort_by(|a, b| b.rating.cmp(&a.rating));
+        leaders.sort_by_key(|leader| Reverse(leader.rating));
         leaders.truncate(8);
 
         Self {

@@ -64,14 +64,14 @@ fn push_cross_conference_round(
     west: &[&Team],
     round: usize,
 ) {
-    for east_index in 0..east.len() {
+    for (east_index, east_team) in east.iter().enumerate() {
         let west_index = (east_index + round) % west.len();
         if (season as usize + east_index + round).is_multiple_of(2) {
             push_game(
                 season,
                 date_index,
                 games,
-                &east[east_index].id,
+                &east_team.id,
                 &west[west_index].id,
             );
         } else {
@@ -80,7 +80,7 @@ fn push_cross_conference_round(
                 date_index,
                 games,
                 &west[west_index].id,
-                &east[east_index].id,
+                &east_team.id,
             );
         }
     }
