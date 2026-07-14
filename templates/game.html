@@ -29,34 +29,52 @@
       </div>
     </section>
     {% if played %}
-      <section class="panel">
+      <section class="box-score">
         <h2>Box Score</h2>
-        <div class="table-wrap">
-          <table class="sortable" data-default-sort-index="4" data-default-sort-dir="desc">
-            <thead>
-              <tr><th>Team</th><th>Player</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>PF</th><th>FG</th><th>3PT</th><th>FT</th></tr>
-            </thead>
-            <tbody>
-            {% for row in box_score %}
-              <tr>
-                <td>{{ row.team }}</td>
-                <td><a href="/players/{{ row.player_id }}">{{ row.player }}</a></td>
-                <td>{{ row.minutes }}</td>
-                <td>{{ row.points }}</td>
-                <td>{{ row.rebounds }}</td>
-                <td>{{ row.assists }}</td>
-                <td>{{ row.steals }}</td>
-                <td>{{ row.blocks }}</td>
-                <td>{{ row.turnovers }}</td>
-                <td>{{ row.fouls }}</td>
-                <td>{{ row.fgm_fga }}</td>
-                <td>{{ row.tpm_tpa }}</td>
-                <td>{{ row.ftm_fta }}</td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        {% for team in teams %}
+          <article class="panel team-details">
+            <h3>{{ team.name }} <strong>{{ team.score }}</strong>{% if team.winner %} <span class="winner">W</span>{% endif %}</h3>
+            <div class="table-wrap">
+              <table class="sortable box-score-table" data-default-sort-index="2" data-default-sort-dir="desc">
+                <thead>
+                  <tr><th>Name</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>FG</th><th>3P</th><th>FT</th><th>TOV</th><th>STL</th><th>BLK</th><th>PF</th></tr>
+                </thead>
+                <tbody>
+                {% for row in team.rows %}
+                  <tr>
+                    <td><a href="/players/{{ row.player_id }}">{{ row.player }}</a></td>
+                    <td>{{ row.minutes }}</td>
+                    <td>{{ row.points }}</td>
+                    <td>{{ row.rebounds }}</td>
+                    <td>{{ row.assists }}</td>
+                    <td>{{ row.fgm_fga }}</td>
+                    <td>{{ row.tpm_tpa }}</td>
+                    <td>{{ row.ftm_fta }}</td>
+                    <td>{{ row.turnovers }}</td>
+                    <td>{{ row.steals }}</td>
+                    <td>{{ row.blocks }}</td>
+                    <td>{{ row.fouls }}</td>
+                  </tr>
+                {% endfor %}
+                  <tr data-sort-ignore="true">
+                    <td><strong>Team</strong></td>
+                    <td>{{ team.totals.minutes }}</td>
+                    <td>{{ team.totals.points }}</td>
+                    <td>{{ team.totals.rebounds }}</td>
+                    <td>{{ team.totals.assists }}</td>
+                    <td>{{ team.totals.fgm_fga }}</td>
+                    <td>{{ team.totals.tpm_tpa }}</td>
+                    <td>{{ team.totals.ftm_fta }}</td>
+                    <td>{{ team.totals.turnovers }}</td>
+                    <td>{{ team.totals.steals }}</td>
+                    <td>{{ team.totals.blocks }}</td>
+                    <td>{{ team.totals.fouls }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        {% endfor %}
       </section>
     {% else %}
       <section class="panel">

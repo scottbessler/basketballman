@@ -152,6 +152,38 @@ h2 {
   font-size: 22px;
 }
 
+.box-score {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.box-score > h2 {
+  margin-bottom: -2px;
+}
+
+.team-details h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+.team-details h3 strong {
+  margin-left: auto;
+}
+
+.winner {
+  color: var(--good);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.box-score-table tbody tr:last-child td {
+  border-top: 2px solid var(--line);
+}
+
 .section-head,
 .sim-panel {
   display: flex;
