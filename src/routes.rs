@@ -367,6 +367,7 @@ impl GameTemplate {
         let player_lines = result
             .and_then(|result| result.player_stats.as_deref())
             .unwrap_or_default();
+        let pie_total = pie_total(player_lines);
         Some(Self {
             game_id: game.id.clone(),
             date_index: game.date_index,
@@ -387,6 +388,7 @@ impl GameTemplate {
                     result.map(|result| result.away_score).unwrap_or_default(),
                     result.is_some_and(|result| result.winner_team_id == away.id),
                     player_lines,
+                    pie_total,
                 ),
                 box_score_team(
                     league,
@@ -394,6 +396,7 @@ impl GameTemplate {
                     result.map(|result| result.home_score).unwrap_or_default(),
                     result.is_some_and(|result| result.winner_team_id == home.id),
                     player_lines,
+                    pie_total,
                 ),
             ],
         })
@@ -587,6 +590,9 @@ struct BoxScoreRow {
     fgm_fga: String,
     tpm_tpa: String,
     ftm_fta: String,
+    pie: String,
+    pps: String,
+    usg: String,
 }
 
 struct BoxScoreTotals {
@@ -597,6 +603,25 @@ struct BoxScoreTotals {
     fgm_fga: String,
     tpm_tpa: String,
     ftm_fta: String,
+    pps: String,
+    turnovers: u16,
+    steals: u16,
+    blocks: u16,
+    fouls: u16,
+}
+
+#[derive(Default)]
+struct NumericTeamTotals {
+    minutes: u16,
+    points: u16,
+    rebounds: u16,
+    assists: u16,
+    field_goals_made: u16,
+    field_goals_attempted: u16,
+    three_pointers_made: u16,
+    three_pointers_attempted: u16,
+    free_throws_made: u16,
+    free_throws_attempted: u16,
     turnovers: u16,
     steals: u16,
     blocks: u16,
@@ -611,13 +636,50 @@ struct BoxScoreTeam {
     totals: BoxScoreTotals,
 }
 
+fn pie_total(lines: &[PlayerGameStats]) -> f64 {
+    lines.iter().map(pie_component).sum()
+}
+
+fn pie_component(line: &PlayerGameStats) -> f64 {
+    line.points as f64 + line.field_goals_made as f64 + line.free_throws_made as f64
+        - line.field_goals_attempted as f64
+        - line.free_throws_attempted as f64
+        + line.rebounds as f64
+        + line.assists as f64
+        + line.steals as f64
+        + line.blocks as f64 / 2.0
+        - line.fouls as f64
+        - line.turnovers as f64
+}
+
 fn box_score_team(
     league: &League,
     team: &Team,
     score: u16,
     winner: bool,
     lines: &[PlayerGameStats],
+    game_pie_total: f64,
 ) -> BoxScoreTeam {
+    let numeric_totals = lines.iter().filter(|line| line.team_id == team.id).fold(
+        NumericTeamTotals::default(),
+        |mut totals, line| {
+            totals.minutes += line.minutes;
+            totals.points += line.points;
+            totals.rebounds += line.rebounds;
+            totals.assists += line.assists;
+            totals.field_goals_made += line.field_goals_made;
+            totals.field_goals_attempted += line.field_goals_attempted;
+            totals.three_pointers_made += line.three_pointers_made;
+            totals.three_pointers_attempted += line.three_pointers_attempted;
+            totals.free_throws_made += line.free_throws_made;
+            totals.free_throws_attempted += line.free_throws_attempted;
+            totals.turnovers += line.turnovers;
+            totals.steals += line.steals;
+            totals.blocks += line.blocks;
+            totals.fouls += line.fouls;
+            totals
+        },
+    );
     let mut rows: Vec<BoxScoreRow> = lines
         .iter()
         .filter(|line| line.team_id == team.id)
@@ -640,49 +702,37 @@ fn box_score_team(
                 fgm_fga: made_attempted(line.field_goals_made, line.field_goals_attempted),
                 tpm_tpa: made_attempted(line.three_pointers_made, line.three_pointers_attempted),
                 ftm_fta: made_attempted(line.free_throws_made, line.free_throws_attempted),
+                pie: format_pie(pie_component(line), game_pie_total),
+                pps: format_pps(line.points, line.field_goals_attempted),
+                usg: format_usg(line, &numeric_totals),
             })
         })
         .collect();
     rows.sort_by_key(|row| Reverse(row.minutes));
 
-    let mut totals = BoxScoreTotals {
-        minutes: 0,
-        points: 0,
-        rebounds: 0,
-        assists: 0,
-        fgm_fga: String::new(),
-        tpm_tpa: String::new(),
-        ftm_fta: String::new(),
-        turnovers: 0,
-        steals: 0,
-        blocks: 0,
-        fouls: 0,
+    let totals = BoxScoreTotals {
+        minutes: numeric_totals.minutes,
+        points: numeric_totals.points,
+        rebounds: numeric_totals.rebounds,
+        assists: numeric_totals.assists,
+        fgm_fga: made_attempted(
+            numeric_totals.field_goals_made,
+            numeric_totals.field_goals_attempted,
+        ),
+        tpm_tpa: made_attempted(
+            numeric_totals.three_pointers_made,
+            numeric_totals.three_pointers_attempted,
+        ),
+        ftm_fta: made_attempted(
+            numeric_totals.free_throws_made,
+            numeric_totals.free_throws_attempted,
+        ),
+        pps: format_pps(numeric_totals.points, numeric_totals.field_goals_attempted),
+        turnovers: numeric_totals.turnovers,
+        steals: numeric_totals.steals,
+        blocks: numeric_totals.blocks,
+        fouls: numeric_totals.fouls,
     };
-    let mut field_goals_made = 0;
-    let mut field_goals_attempted = 0;
-    let mut three_pointers_made = 0;
-    let mut three_pointers_attempted = 0;
-    let mut free_throws_made = 0;
-    let mut free_throws_attempted = 0;
-    for line in lines.iter().filter(|line| line.team_id == team.id) {
-        totals.minutes += line.minutes;
-        totals.points += line.points;
-        totals.rebounds += line.rebounds;
-        totals.assists += line.assists;
-        totals.turnovers += line.turnovers;
-        totals.steals += line.steals;
-        totals.blocks += line.blocks;
-        totals.fouls += line.fouls;
-        field_goals_made += line.field_goals_made;
-        field_goals_attempted += line.field_goals_attempted;
-        three_pointers_made += line.three_pointers_made;
-        three_pointers_attempted += line.three_pointers_attempted;
-        free_throws_made += line.free_throws_made;
-        free_throws_attempted += line.free_throws_attempted;
-    }
-    totals.fgm_fga = made_attempted(field_goals_made, field_goals_attempted);
-    totals.tpm_tpa = made_attempted(three_pointers_made, three_pointers_attempted);
-    totals.ftm_fta = made_attempted(free_throws_made, free_throws_attempted);
 
     BoxScoreTeam {
         name: format!("{} {}", team.city, team.name),
@@ -690,6 +740,45 @@ fn box_score_team(
         winner,
         rows,
         totals,
+    }
+}
+
+fn format_pie(component: f64, total: f64) -> String {
+    if total == 0.0 {
+        "0".to_string()
+    } else {
+        (100.0 * component / total).round().to_string()
+    }
+}
+
+fn format_pps(points: u16, field_goals_attempted: u16) -> String {
+    if field_goals_attempted == 0 {
+        String::new()
+    } else {
+        format!(
+            "{:.2}",
+            ((points as f64 * 100.0) / field_goals_attempted as f64).round() / 100.0
+        )
+    }
+}
+
+fn format_usg(line: &PlayerGameStats, team: &NumericTeamTotals) -> String {
+    let minutes = line.minutes as f64;
+    if minutes <= 0.0 {
+        return String::new();
+    }
+    let numerator = (line.field_goals_attempted as f64
+        + 0.44 * line.free_throws_attempted as f64
+        + line.turnovers as f64)
+        * (team.minutes as f64 / 5.0);
+    let denominator = minutes
+        * (team.field_goals_attempted as f64
+            + 0.44 * team.free_throws_attempted as f64
+            + team.turnovers as f64);
+    if denominator == 0.0 {
+        String::new()
+    } else {
+        (100.0 * numerator / denominator).round().to_string()
     }
 }
 
