@@ -35,9 +35,9 @@
           <article class="panel team-details">
             <h3>{{ team.name }} <strong>{{ team.score }}</strong>{% if team.winner %} <span class="winner">W</span>{% endif %}</h3>
             <div class="table-wrap">
-              <table class="sortable box-score-table" data-default-sort-index="2" data-default-sort-dir="desc">
+              <table class="sortable box-score-table" data-default-sort-index="5" data-default-sort-dir="desc">
                 <thead>
-                  <tr><th>Name</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>FG</th><th>3P</th><th>FT</th><th>TOV</th><th>STL</th><th>BLK</th><th>PF</th></tr>
+                  <tr><th>Name</th><th>MIN</th><th>PTS</th><th>RB</th><th>AS</th><th>PIE</th><th>FG</th><th>3P</th><th>FT</th><th>PPS</th><th>TO</th><th>ST</th><th>BK</th><th>PF</th><th>USG</th></tr>
                 </thead>
                 <tbody>
                 {% for row in team.rows %}
@@ -47,13 +47,16 @@
                     <td>{{ row.points }}</td>
                     <td>{{ row.rebounds }}</td>
                     <td>{{ row.assists }}</td>
+                    <td>{{ row.pie }}</td>
                     <td>{{ row.fgm_fga }}</td>
                     <td>{{ row.tpm_tpa }}</td>
                     <td>{{ row.ftm_fta }}</td>
+                    <td>{{ row.pps }}</td>
                     <td>{{ row.turnovers }}</td>
                     <td>{{ row.steals }}</td>
                     <td>{{ row.blocks }}</td>
                     <td>{{ row.fouls }}</td>
+                    <td>{{ row.usg }}</td>
                   </tr>
                 {% endfor %}
                   <tr data-sort-ignore="true">
@@ -62,13 +65,16 @@
                     <td>{{ team.totals.points }}</td>
                     <td>{{ team.totals.rebounds }}</td>
                     <td>{{ team.totals.assists }}</td>
+                    <td></td>
                     <td>{{ team.totals.fgm_fga }}</td>
                     <td>{{ team.totals.tpm_tpa }}</td>
                     <td>{{ team.totals.ftm_fta }}</td>
+                    <td>{{ team.totals.pps }}</td>
                     <td>{{ team.totals.turnovers }}</td>
                     <td>{{ team.totals.steals }}</td>
                     <td>{{ team.totals.blocks }}</td>
                     <td>{{ team.totals.fouls }}</td>
+                    <td></td>
                   </tr>
                 </tbody>
               </table>
