@@ -2,13 +2,11 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use basketballman::config::{NBA_NICKNAMES, TEAM_SEEDS};
 use basketballman::generator::generate_league;
-use basketballman::models::GameResult;
 use basketballman::models::{Conference, GameStatus};
+use basketballman::models::{GameResult, PlayerGameStats};
 use basketballman::repo::LeagueRepository;
 use basketballman::routes::{AppState, app};
-use basketballman::sim::{
-    GameEngine, PossessionEngine, RatingRollEngine, SimConfig, simulate_game, simulation_input,
-};
+use basketballman::sim::{PossessionEngine, SimConfig, simulate_game, simulation_input};
 use basketballman::stats::{player_season_stats, standings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -229,23 +227,56 @@ fn possession_minutes_follow_on_floor_rotation() {
 }
 
 #[test]
-fn game_engines_are_pure_over_scheduled_game_input() {
+fn possession_engine_is_pure_over_scheduled_game_input() {
     let league = generate_league(7);
     let game = league.schedule[0].clone();
     let input = simulation_input(&league, &game, SimConfig::default()).expect("input");
-    let rating = RatingRollEngine;
     let possession = PossessionEngine;
 
-    let rating_first = rating.simulate(&input);
-    let rating_second = rating.simulate(&input);
+    let possession_first = possession.simulate(&input);
+    let possession_second = possession.simulate(&input);
     let possession_result = possession.simulate(&input);
 
-    assert_eq!(rating_first, rating_second);
+    assert_eq!(possession_first, possession_second);
     assert!(league.results.is_empty());
     assert_eq!(league.schedule[0].status, GameStatus::Scheduled);
-    assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &rating_first);
     assert_valid_engine_result(&game.home_team_id, &game.away_team_id, &possession_result);
     assert!(possession_result.team_stats.unwrap().possessions > 0);
+}
+
+#[test]
+fn possession_engine_conserves_plus_minus_by_team() {
+    let league = generate_league(7);
+    let game = league.schedule[0].clone();
+    let input = simulation_input(&league, &game, SimConfig::default()).expect("input");
+
+    let result = PossessionEngine.simulate(&input);
+    assert_plus_minus_invariant(&game.home_team_id, &game.away_team_id, &result);
+}
+
+#[test]
+fn player_game_stats_backcompat_defaults_plus_minus() {
+    let value = serde_json::json!({
+        "player_id": "p001",
+        "team_id": "t01",
+        "minutes": 24,
+        "points": 12,
+        "rebounds": 4,
+        "assists": 3,
+        "steals": 1,
+        "blocks": 0,
+        "turnovers": 2,
+        "fouls": 1,
+        "field_goals_attempted": 10,
+        "field_goals_made": 5,
+        "three_pointers_attempted": 3,
+        "three_pointers_made": 1,
+        "free_throws_attempted": 2,
+        "free_throws_made": 1
+    });
+
+    let stats: PlayerGameStats = serde_json::from_value(value).expect("legacy stats");
+    assert_eq!(stats.plus_minus, 0);
 }
 
 #[test]
@@ -459,4 +490,22 @@ fn assert_valid_engine_result(home: &str, away: &str, result: &GameResult) {
         .sum();
     assert_eq!(home_points, result.home_score);
     assert_eq!(away_points, result.away_score);
+}
+
+fn assert_plus_minus_invariant(home: &str, away: &str, result: &GameResult) {
+    let lines = result.player_stats.as_ref().expect("player stats");
+    let home_plus_minus: i16 = lines
+        .iter()
+        .filter(|line| line.team_id == home)
+        .map(|line| line.plus_minus)
+        .sum();
+    let away_plus_minus: i16 = lines
+        .iter()
+        .filter(|line| line.team_id == away)
+        .map(|line| line.plus_minus)
+        .sum();
+    let margin = result.home_score as i16 - result.away_score as i16;
+    assert_eq!(home_plus_minus, 5 * margin);
+    assert_eq!(away_plus_minus, -5 * margin);
+    assert_eq!(home_plus_minus + away_plus_minus, 0);
 }
