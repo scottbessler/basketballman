@@ -163,25 +163,53 @@ impl GameEngine for PossessionEngine {
         let possessions = rng.gen_range(96..=106);
         let mut home_lines = empty_player_lines(input.home_team, &input.home_players);
         let mut away_lines = empty_player_lines(input.away_team, &input.away_players);
+        let mut home_seconds = vec![0.0; input.home_players.len()];
+        let mut away_seconds = vec![0.0; input.away_players.len()];
+        let mut home_lineup = starting_lineup(&input.home_players);
+        let mut away_lineup = starting_lineup(&input.away_players);
+        let home_targets = target_seconds(&input.home_players);
+        let away_targets = target_seconds(&input.away_players);
         let mut home_score = 0u16;
         let mut away_score = 0u16;
+        let seconds_per_iteration = 2880.0 / possessions as f64;
 
         for _ in 0..possessions {
+            credit_floor_time(&home_lineup, &mut home_seconds, seconds_per_iteration);
+            credit_floor_time(&away_lineup, &mut away_seconds, seconds_per_iteration);
             home_score += simulate_possession(
                 &input.home_players,
+                &home_lineup,
                 &input.away_players,
+                &away_lineup,
                 &mut home_lines,
                 input.config.home_advantage,
                 &mut rng,
             );
             away_score += simulate_possession(
                 &input.away_players,
+                &away_lineup,
                 &input.home_players,
+                &home_lineup,
                 &mut away_lines,
                 0,
                 &mut rng,
             );
+            substitute(
+                &mut home_lineup,
+                &home_seconds,
+                &home_targets,
+                seconds_per_iteration,
+            );
+            substitute(
+                &mut away_lineup,
+                &away_seconds,
+                &away_targets,
+                seconds_per_iteration,
+            );
         }
+
+        finalize_minutes(&mut home_lines, &home_seconds);
+        finalize_minutes(&mut away_lines, &away_seconds);
 
         if home_score == away_score {
             if rng.gen_bool(0.5) {
@@ -201,14 +229,16 @@ impl GameEngine for PossessionEngine {
 
 fn simulate_possession(
     offense: &[&Player],
+    offense_lineup: &[usize],
     defense: &[&Player],
+    defense_lineup: &[usize],
     lines: &mut [PlayerGameStats],
     advantage: i16,
     rng: &mut ChaCha8Rng,
 ) -> u16 {
-    let shooter_index = weighted_player_index(offense, rng);
+    let shooter_index = weighted_player_index(offense, offense_lineup, rng);
     let shooter = offense[shooter_index];
-    let avg_defense = average_defense(defense);
+    let avg_defense = average_defense(defense, defense_lineup);
     let foul_roll = rng.gen_range(0..100);
 
     if foul_roll < 8 {
@@ -241,10 +271,10 @@ fn simulate_possession(
             lines[shooter_index].three_pointers_made += 1;
         }
         lines[shooter_index].points += points;
-        credit_assist(offense, lines, shooter_index, rng);
+        credit_assist(offense, offense_lineup, lines, shooter_index, rng);
         points
     } else {
-        credit_rebound(lines, offense, rng);
+        credit_rebound(lines, offense, offense_lineup, rng);
         0
     }
 }
@@ -339,14 +369,12 @@ fn simulate_team_player_stats(
 }
 
 fn empty_player_lines(team: &Team, players: &[&Player]) -> Vec<PlayerGameStats> {
-    let minutes = minute_distribution(players.len());
     players
         .iter()
-        .enumerate()
-        .map(|(index, player)| PlayerGameStats {
+        .map(|player| PlayerGameStats {
             player_id: player.id.clone(),
             team_id: team.id.clone(),
-            minutes: minutes[index],
+            minutes: 0,
             points: 0,
             rebounds: 0,
             assists: 0,
@@ -371,10 +399,11 @@ fn roster_players<'a>(league: &'a League, team: &Team) -> Vec<&'a Player> {
         .collect()
 }
 
-fn weighted_player_index(players: &[&Player], rng: &mut ChaCha8Rng) -> usize {
-    let weights: Vec<u16> = players
+fn weighted_player_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha8Rng) -> usize {
+    let weights: Vec<u16> = lineup
         .iter()
-        .map(|player| {
+        .map(|index| {
+            let player = players[*index];
             player.ratings.offense as u16
                 + player.ratings.shooting as u16
                 + player.ratings.playmaking as u16 / 2
@@ -382,24 +411,24 @@ fn weighted_player_index(players: &[&Player], rng: &mut ChaCha8Rng) -> usize {
         .collect();
     let total: u16 = weights.iter().sum();
     let mut ticket = rng.gen_range(0..total.max(1));
-    for (index, weight) in weights.iter().enumerate() {
+    for (slot, weight) in weights.iter().enumerate() {
         if ticket < *weight {
-            return index;
+            return lineup[slot];
         }
         ticket -= *weight;
     }
-    players.len().saturating_sub(1)
+    lineup.last().copied().unwrap_or(0)
 }
 
-fn average_defense(players: &[&Player]) -> u8 {
-    if players.is_empty() {
+fn average_defense(players: &[&Player], lineup: &[usize]) -> u8 {
+    if lineup.is_empty() {
         return 50;
     }
-    (players
+    (lineup
         .iter()
-        .map(|player| player.ratings.defense as u16)
+        .map(|index| players[*index].ratings.defense as u16)
         .sum::<u16>()
-        / players.len() as u16) as u8
+        / lineup.len() as u16) as u8
 }
 
 fn turnover_chance(player: &Player, avg_defense: u8) -> u8 {
@@ -418,33 +447,43 @@ fn shot_make_threshold(player: &Player, avg_defense: u8, three: bool, advantage:
 
 fn credit_assist(
     players: &[&Player],
+    lineup: &[usize],
     lines: &mut [PlayerGameStats],
     shooter_index: usize,
     rng: &mut ChaCha8Rng,
 ) {
-    if players.len() <= 1 || !rng.gen_bool(0.58) {
+    if lineup.len() <= 1 || !rng.gen_bool(0.58) {
         return;
     }
-    let mut passer_index = weighted_player_index(players, rng);
+    let mut passer_index = weighted_player_index(players, lineup, rng);
     if passer_index == shooter_index {
-        passer_index = (passer_index + 1) % players.len();
+        let shooter_slot = lineup
+            .iter()
+            .position(|index| *index == shooter_index)
+            .unwrap_or(0);
+        passer_index = lineup[(shooter_slot + 1) % lineup.len()];
     }
     lines[passer_index].assists += 1;
 }
 
-fn credit_rebound(lines: &mut [PlayerGameStats], players: &[&Player], rng: &mut ChaCha8Rng) {
-    if players.is_empty() {
+fn credit_rebound(
+    lines: &mut [PlayerGameStats],
+    players: &[&Player],
+    lineup: &[usize],
+    rng: &mut ChaCha8Rng,
+) {
+    if lineup.is_empty() {
         return;
     }
-    let weights: Vec<u16> = players
+    let weights: Vec<u16> = lineup
         .iter()
-        .map(|player| player.ratings.rebounding as u16 + 10)
+        .map(|index| players[*index].ratings.rebounding as u16 + 10)
         .collect();
     let total: u16 = weights.iter().sum();
     let mut ticket = rng.gen_range(0..total.max(1));
-    for (index, weight) in weights.iter().enumerate() {
+    for (slot, weight) in weights.iter().enumerate() {
         if ticket < *weight {
-            lines[index].rebounds += 1;
+            lines[lineup[slot]].rebounds += 1;
             return;
         }
         ticket -= *weight;
@@ -464,6 +503,117 @@ fn minute_distribution(count: usize) -> Vec<u16> {
     (0..count)
         .map(|index| *base.get(index).unwrap_or(&0))
         .collect()
+}
+
+fn starting_lineup(players: &[&Player]) -> Vec<usize> {
+    let mut lineup: Vec<usize> = (0..players.len()).collect();
+    lineup.sort_by_key(|index| {
+        (
+            std::cmp::Reverse(player_overall(players[*index])),
+            players[*index].id.as_str(),
+        )
+    });
+    lineup.truncate(5);
+    lineup
+}
+
+fn player_overall(player: &Player) -> u16 {
+    (player.ratings.offense as u16
+        + player.ratings.defense as u16
+        + player.ratings.shooting as u16
+        + player.ratings.playmaking as u16
+        + player.ratings.rebounding as u16)
+        / 5
+}
+
+fn target_seconds(players: &[&Player]) -> Vec<f64> {
+    let mut weights = vec![0.0; players.len()];
+    let mut ranked: Vec<usize> = (0..players.len()).collect();
+    ranked.sort_by_key(|index| {
+        (
+            std::cmp::Reverse(player_overall(players[*index])),
+            players[*index].id.as_str(),
+        )
+    });
+    for (rank, index) in ranked.into_iter().enumerate() {
+        let role_weight = if rank < 5 {
+            1.0
+        } else if rank < 9 {
+            0.65
+        } else {
+            0.2
+        };
+        weights[index] = player_overall(players[index]) as f64 * role_weight;
+    }
+    let total: f64 = weights.iter().sum();
+    if total == 0.0 {
+        weights.fill(1.0);
+    }
+    let total = weights.iter().sum::<f64>();
+    weights
+        .into_iter()
+        .map(|weight| weight / total * 5.0 * 2880.0)
+        .collect()
+}
+
+fn credit_floor_time(lineup: &[usize], seconds: &mut [f64], amount: f64) {
+    for index in lineup {
+        seconds[*index] += amount;
+    }
+}
+
+fn substitute(lineup: &mut [usize], seconds: &[f64], targets: &[f64], iteration_seconds: f64) {
+    if lineup.is_empty() {
+        return;
+    }
+    let lineup_set = lineup.to_vec();
+    let Some((on_slot, &on_index)) = lineup.iter().enumerate().max_by(|(_, left), (_, right)| {
+        (seconds[**left] - targets[**left])
+            .partial_cmp(&(seconds[**right] - targets[**right]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) else {
+        return;
+    };
+    let Some(bench_index) = (0..seconds.len())
+        .filter(|index| !lineup_set.contains(index))
+        .min_by(|left, right| {
+            (seconds[*left] - targets[*left])
+                .partial_cmp(&(seconds[*right] - targets[*right]))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    else {
+        return;
+    };
+    if seconds[on_index] - targets[on_index] >= iteration_seconds
+        && targets[bench_index] - seconds[bench_index] >= iteration_seconds
+    {
+        lineup[on_slot] = bench_index;
+    }
+}
+
+fn finalize_minutes(lines: &mut [PlayerGameStats], seconds: &[f64]) {
+    let raw_minutes: Vec<f64> = seconds.iter().map(|value| value / 60.0).collect();
+    let mut minutes: Vec<u16> = raw_minutes
+        .iter()
+        .map(|value| value.floor() as u16)
+        .collect();
+    let target_total: usize = 5 * 48;
+    let current_total: usize = minutes.iter().map(|value| *value as usize).sum();
+    let remaining = target_total.saturating_sub(current_total);
+    let mut by_fraction: Vec<usize> = (0..lines.len()).collect();
+    by_fraction.sort_by(|left, right| {
+        raw_minutes[*right]
+            .fract()
+            .partial_cmp(&raw_minutes[*left].fract())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.cmp(right))
+    });
+    for index in by_fraction.into_iter().take(remaining) {
+        minutes[index] += 1;
+    }
+    for (line, minute) in lines.iter_mut().zip(minutes) {
+        line.minutes = minute.min(48);
+    }
 }
 
 fn distribute_points(target_points: u16, weights: &[u16]) -> Vec<u16> {

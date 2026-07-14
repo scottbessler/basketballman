@@ -171,6 +171,64 @@ fn simulation_persists_one_positive_result_winner_and_player_stats() {
 }
 
 #[test]
+fn possession_minutes_follow_on_floor_rotation() {
+    let mut league = generate_league(7);
+    let game_id = league.schedule[0].id.clone();
+    let game = league.schedule[0].clone();
+    let result = simulate_game(&mut league, &game_id, SimConfig::default()).expect("result");
+    let lines = result.player_stats.as_ref().expect("player stats");
+
+    for team_id in [&game.home_team_id, &game.away_team_id] {
+        let team = league
+            .teams
+            .iter()
+            .find(|team| &team.id == team_id)
+            .expect("team");
+        let team_lines: Vec<_> = lines
+            .iter()
+            .filter(|line| &line.team_id == team_id)
+            .collect();
+        let minutes: u16 = team_lines.iter().map(|line| line.minutes).sum();
+        assert!(
+            (239..=241).contains(&minutes),
+            "{team_id} has {minutes} minutes"
+        );
+        assert!(team_lines.iter().all(|line| line.minutes <= 48));
+
+        let mut players: Vec<_> = team
+            .roster
+            .iter()
+            .filter_map(|player_id| league.players.iter().find(|player| &player.id == player_id))
+            .collect();
+        players.sort_by_key(|player| {
+            (
+                std::cmp::Reverse(
+                    (player.ratings.offense as u16
+                        + player.ratings.defense as u16
+                        + player.ratings.shooting as u16
+                        + player.ratings.playmaking as u16
+                        + player.ratings.rebounding as u16)
+                        / 5,
+                ),
+                player.id.as_str(),
+            )
+        });
+        for player in players.into_iter().take(5) {
+            let minutes = team_lines
+                .iter()
+                .find(|line| line.player_id == player.id)
+                .expect("top-five line")
+                .minutes;
+            assert!(
+                (30..=40).contains(&minutes),
+                "{} has {minutes} minutes",
+                player.name
+            );
+        }
+    }
+}
+
+#[test]
 fn game_engines_are_pure_over_scheduled_game_input() {
     let league = generate_league(7);
     let game = league.schedule[0].clone();
