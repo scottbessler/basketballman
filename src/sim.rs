@@ -104,6 +104,7 @@ impl PossessionEngine {
                 &input.away_players,
                 &away_lineup,
                 &mut home_lines,
+                &mut away_lines,
                 input.config.home_advantage,
                 &mut rng,
             );
@@ -122,6 +123,7 @@ impl PossessionEngine {
                 &input.home_players,
                 &home_lineup,
                 &mut away_lines,
+                &mut home_lines,
                 0,
                 &mut rng,
             );
@@ -183,12 +185,14 @@ impl PossessionEngine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn simulate_possession(
     offense: &[&Player],
     offense_lineup: &[usize],
     defense: &[&Player],
     defense_lineup: &[usize],
     lines: &mut [PlayerGameStats],
+    defense_lines: &mut [PlayerGameStats],
     advantage: i16,
     rng: &mut ChaCha8Rng,
 ) -> u16 {
@@ -210,6 +214,13 @@ fn simulate_possession(
 
     if rng.gen_range(0..100) < turnover_chance(shooter, avg_defense) {
         lines[shooter_index].turnovers += 1;
+        // Roughly half of turnovers are live-ball steals credited to a defender.
+        if rng.gen_bool(0.55)
+            && let Some(stealer) =
+                weighted_defender_index(defense, defense_lineup, rng, |p| p.ratings.defense as u16)
+        {
+            defense_lines[stealer].steals += 1;
+        }
         return 0;
     }
 
@@ -230,9 +241,42 @@ fn simulate_possession(
         credit_assist(offense, offense_lineup, lines, shooter_index, rng);
         points
     } else {
+        // Interior shots are far more likely to be blocked than perimeter jumpers.
+        let block_chance = if three { 3 } else { 9 };
+        if rng.gen_range(0..100) < block_chance
+            && let Some(blocker) = weighted_defender_index(defense, defense_lineup, rng, |p| {
+                p.ratings.defense as u16 + p.ratings.rebounding as u16
+            })
+        {
+            defense_lines[blocker].blocks += 1;
+        }
         credit_rebound(lines, offense, offense_lineup, rng);
         0
     }
+}
+
+fn weighted_defender_index(
+    defense: &[&Player],
+    defense_lineup: &[usize],
+    rng: &mut ChaCha8Rng,
+    weight_of: impl Fn(&Player) -> u16,
+) -> Option<usize> {
+    if defense_lineup.is_empty() {
+        return None;
+    }
+    let weights: Vec<u16> = defense_lineup
+        .iter()
+        .map(|index| weight_of(defense[*index]).saturating_add(5))
+        .collect();
+    let total: u16 = weights.iter().sum();
+    let mut ticket = rng.gen_range(0..total.max(1));
+    for (slot, weight) in weights.iter().enumerate() {
+        if ticket < *weight {
+            return Some(defense_lineup[slot]);
+        }
+        ticket -= *weight;
+    }
+    defense_lineup.last().copied()
 }
 
 fn result_from_scores(
