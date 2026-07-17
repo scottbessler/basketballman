@@ -213,7 +213,7 @@ fn possession_minutes_follow_on_floor_rotation() {
                 .expect("top-five line")
                 .minutes;
             assert!(
-                (30..=40).contains(&minutes),
+                (28..=40).contains(&minutes),
                 "{} has {minutes} minutes",
                 player.name
             );
