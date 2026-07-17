@@ -350,6 +350,20 @@ struct GameTemplate {
     status: String,
     played: bool,
     teams: Vec<BoxScoreTeam>,
+    has_pbp: bool,
+    pbp_quarters: Vec<PbpQuarter>,
+}
+
+struct PbpQuarter {
+    label: String,
+    plays: Vec<PbpRow>,
+}
+
+struct PbpRow {
+    clock: String,
+    team: String,
+    description: String,
+    score: String,
 }
 
 impl GameTemplate {
@@ -368,6 +382,7 @@ impl GameTemplate {
             .and_then(|result| result.player_stats.as_deref())
             .unwrap_or_default();
         let pie_total = pie_total(player_lines);
+        let pbp_quarters = pbp_quarters(league, result);
         Some(Self {
             game_id: game.id.clone(),
             date_index: game.date_index,
@@ -399,7 +414,47 @@ impl GameTemplate {
                     pie_total,
                 ),
             ],
+            has_pbp: !pbp_quarters.is_empty(),
+            pbp_quarters,
         })
+    }
+}
+
+fn pbp_quarters(league: &League, result: Option<&GameResult>) -> Vec<PbpQuarter> {
+    let plays = result
+        .and_then(|result| result.play_by_play.as_deref())
+        .unwrap_or_default();
+    let mut quarters: Vec<PbpQuarter> = Vec::new();
+    for play in plays {
+        let team = league
+            .teams
+            .iter()
+            .find(|team| team.id == play.team_id)
+            .map(|team| team.name.clone())
+            .unwrap_or_else(|| play.team_id.clone());
+        let label = quarter_label(play.quarter);
+        if quarters.last().map(|quarter| quarter.label.as_str()) != Some(label) {
+            quarters.push(PbpQuarter {
+                label: label.to_string(),
+                plays: Vec::new(),
+            });
+        }
+        quarters.last_mut().expect("quarter").plays.push(PbpRow {
+            clock: play.clock.clone(),
+            team,
+            description: play.description.clone(),
+            score: format!("{} - {}", play.away_score, play.home_score),
+        });
+    }
+    quarters
+}
+
+fn quarter_label(quarter: u8) -> &'static str {
+    match quarter {
+        1 => "1st Quarter",
+        2 => "2nd Quarter",
+        3 => "3rd Quarter",
+        _ => "4th Quarter",
     }
 }
 

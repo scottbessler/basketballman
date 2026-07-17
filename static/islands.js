@@ -91,6 +91,26 @@ function attachSort() {
   });
 }
 
+function attachTabs() {
+  const container = document.querySelector("[data-tabs]");
+  if (!container) return;
+  const buttons = Array.from(container.querySelectorAll("[data-tab]"));
+  const panels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+
+  for (const button of buttons) {
+    button.addEventListener("click", () => {
+      for (const item of buttons) {
+        const active = item === button;
+        item.classList.toggle("active", active);
+        item.setAttribute("aria-selected", active ? "true" : "false");
+      }
+      for (const panel of panels) {
+        panel.hidden = panel.dataset.tabPanel !== button.dataset.tab;
+      }
+    });
+  }
+}
+
 function SimStatus() {
   return h("span", { class: "pill" }, "Simulating");
 }
@@ -109,4 +129,5 @@ function attachSimFeedback() {
 
 attachFilters();
 attachSort();
+attachTabs();
 attachSimFeedback();

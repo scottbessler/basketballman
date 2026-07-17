@@ -139,6 +139,18 @@ pub struct GameResult {
     pub winner_team_id: TeamId,
     pub team_stats: Option<TeamStats>,
     pub player_stats: Option<Vec<PlayerGameStats>>,
+    #[serde(default)]
+    pub play_by_play: Option<Vec<PlayEvent>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PlayEvent {
+    pub quarter: u8,
+    pub clock: String,
+    pub team_id: TeamId,
+    pub description: String,
+    pub away_score: u16,
+    pub home_score: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
