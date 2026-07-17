@@ -30,7 +30,7 @@
       <div class="table-wrap">
         <table class="sortable" data-default-sort-index="7" data-default-sort-dir="desc">
           <thead>
-            <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>FG</th><th>3PT</th><th>FT</th></tr>
+            <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>FG</th><th>3PT</th><th>FT</th><th>2P%</th><th>3P%</th><th>FT%</th><th>Inside</th><th>3T</th></tr>
           </thead>
           <tbody>
           {% for player in players %}
@@ -50,6 +50,11 @@
               <td>{{ player.fgm_fga }}</td>
               <td>{{ player.tpm_tpa }}</td>
               <td>{{ player.ftm_fta }}</td>
+              <td>{{ player.two_point_pct }}%</td>
+              <td>{{ player.three_point_pct }}%</td>
+              <td>{{ player.ft_pct }}%</td>
+              <td>{{ player.inside_scoring }}</td>
+              <td>{{ player.three_tendency }}</td>
             </tr>
           {% endfor %}
           </tbody>

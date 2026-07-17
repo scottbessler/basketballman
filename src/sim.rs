@@ -196,63 +196,82 @@ fn simulate_possession(
     advantage: i16,
     rng: &mut ChaCha8Rng,
 ) -> u16 {
-    let shooter_index = weighted_player_index(offense, offense_lineup, rng);
-    let shooter = offense[shooter_index];
-    let avg_defense = average_defense(defense, defense_lineup);
-    let foul_roll = rng.gen_range(0..100);
+    for _ in 0..=2 {
+        let shooter_index = weighted_player_index(offense, offense_lineup, rng);
+        let shooter = offense[shooter_index];
+        let contest = average_defensive_contest(defense, defense_lineup);
+        let foul_chance = (5 + shooter.ratings.inside_scoring / 14).clamp(5, 12);
 
-    if foul_roll < 8 {
-        let attempts = if rng.gen_bool(0.22) { 3 } else { 2 };
-        let made = (0..attempts)
-            .filter(|_| rng.gen_range(0..100) < shooter.ratings.shooting.saturating_add(12))
-            .count() as u16;
-        lines[shooter_index].free_throws_attempted += attempts;
-        lines[shooter_index].free_throws_made += made;
-        lines[shooter_index].points += made;
-        return made;
-    }
-
-    if rng.gen_range(0..100) < turnover_chance(shooter, avg_defense) {
-        lines[shooter_index].turnovers += 1;
-        // Roughly half of turnovers are live-ball steals credited to a defender.
-        if rng.gen_bool(0.55)
-            && let Some(stealer) =
-                weighted_defender_index(defense, defense_lineup, rng, |p| p.ratings.defense as u16)
-        {
-            defense_lines[stealer].steals += 1;
+        if rng.gen_range(0..100) < foul_chance {
+            let attempts = if rng.gen_bool(0.16) { 3 } else { 2 };
+            let made = (0..attempts)
+                .filter(|_| rng.gen_range(0..100) < shooter.ratings.ft_pct)
+                .count() as u16;
+            lines[shooter_index].free_throws_attempted += attempts;
+            lines[shooter_index].free_throws_made += made;
+            lines[shooter_index].points += made;
+            return made;
         }
-        return 0;
-    }
 
-    let three = rng.gen_bool((0.26 + shooter.ratings.shooting as f64 / 500.0).min(0.46));
-    let make_threshold = shot_make_threshold(shooter, avg_defense, three, advantage);
-    lines[shooter_index].field_goals_attempted += 1;
-    if three {
-        lines[shooter_index].three_pointers_attempted += 1;
-    }
+        if rng.gen_range(0..100) < turnover_chance(shooter, contest.steal_pressure) {
+            lines[shooter_index].turnovers += 1;
+            if rng.gen_bool(0.70)
+                && let Some(stealer) = weighted_defender_index(defense, defense_lineup, rng, |p| {
+                    p.ratings.steal as u16
+                })
+            {
+                defense_lines[stealer].steals += 1;
+            }
+            return 0;
+        }
 
-    if rng.gen_range(0..100) < make_threshold {
-        lines[shooter_index].field_goals_made += 1;
-        let points = if three { 3 } else { 2 };
+        let three_probability = (0.15 + shooter.ratings.three_tendency as f64 / 330.0
+            - shooter.ratings.inside_scoring as f64 / 1400.0
+            + contest.perimeter as f64 / 3000.0)
+            .clamp(0.15, 0.45);
+        let three = rng.gen_bool(three_probability);
+        let make_threshold = shot_make_threshold(shooter, contest, three, advantage);
+        lines[shooter_index].field_goals_attempted += 1;
         if three {
-            lines[shooter_index].three_pointers_made += 1;
+            lines[shooter_index].three_pointers_attempted += 1;
         }
-        lines[shooter_index].points += points;
-        credit_assist(offense, offense_lineup, lines, shooter_index, rng);
-        points
-    } else {
-        // Interior shots are far more likely to be blocked than perimeter jumpers.
-        let block_chance = if three { 3 } else { 9 };
+
+        if rng.gen_range(0..100) < make_threshold {
+            lines[shooter_index].field_goals_made += 1;
+            let points = if three { 3 } else { 2 };
+            if three {
+                lines[shooter_index].three_pointers_made += 1;
+            }
+            lines[shooter_index].points += points;
+            credit_assist(offense, offense_lineup, lines, shooter_index, rng);
+            return points;
+        }
+
+        let block_chance = if three {
+            1 + contest.block_pressure / 25
+        } else {
+            5 + contest.block_pressure / 8
+        };
         if rng.gen_range(0..100) < block_chance
-            && let Some(blocker) = weighted_defender_index(defense, defense_lineup, rng, |p| {
-                p.ratings.defense as u16 + p.ratings.rebounding as u16
-            })
+            && let Some(blocker) =
+                weighted_defender_index(defense, defense_lineup, rng, |p| p.ratings.block as u16)
         {
             defense_lines[blocker].blocks += 1;
         }
-        credit_rebound(lines, offense, offense_lineup, rng);
-        0
+        if credit_rebound(
+            lines,
+            defense_lines,
+            offense,
+            offense_lineup,
+            defense,
+            defense_lineup,
+            rng,
+        ) {
+            continue;
+        }
+        return 0;
     }
+    0
 }
 
 fn weighted_defender_index(
@@ -361,9 +380,7 @@ fn weighted_player_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha
         .iter()
         .map(|index| {
             let player = players[*index];
-            player.ratings.offense as u16
-                + player.ratings.shooting as u16
-                + player.ratings.playmaking as u16 / 2
+            usage_weight(player)
         })
         .collect();
     let total: u16 = weights.iter().sum();
@@ -377,29 +394,68 @@ fn weighted_player_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha
     lineup.last().copied().unwrap_or(0)
 }
 
-fn average_defense(players: &[&Player], lineup: &[usize]) -> u8 {
+#[derive(Copy, Clone)]
+struct DefensiveContest {
+    perimeter: u8,
+    interior: u8,
+    steal_pressure: u8,
+    block_pressure: u8,
+}
+
+fn average_defensive_contest(players: &[&Player], lineup: &[usize]) -> DefensiveContest {
     if lineup.is_empty() {
-        return 50;
+        return DefensiveContest {
+            perimeter: 50,
+            interior: 50,
+            steal_pressure: 50,
+            block_pressure: 50,
+        };
     }
-    (lineup
-        .iter()
-        .map(|index| players[*index].ratings.defense as u16)
-        .sum::<u16>()
-        / lineup.len() as u16) as u8
+    let count = lineup.len() as u16;
+    DefensiveContest {
+        perimeter: (lineup
+            .iter()
+            .map(|index| players[*index].ratings.perimeter_defense as u16)
+            .sum::<u16>()
+            / count) as u8,
+        interior: (lineup
+            .iter()
+            .map(|index| players[*index].ratings.interior_defense as u16)
+            .sum::<u16>()
+            / count) as u8,
+        steal_pressure: (lineup
+            .iter()
+            .map(|index| players[*index].ratings.steal as u16)
+            .sum::<u16>()
+            / count) as u8,
+        block_pressure: (lineup
+            .iter()
+            .map(|index| players[*index].ratings.block as u16)
+            .sum::<u16>()
+            / count) as u8,
+    }
 }
 
-fn turnover_chance(player: &Player, avg_defense: u8) -> u8 {
-    (14 + avg_defense.saturating_sub(player.ratings.playmaking) / 5).clamp(7, 20)
+fn turnover_chance(player: &Player, steal_pressure: u8) -> u8 {
+    (11 + steal_pressure.saturating_sub(player.ratings.ball_handling) / 6).clamp(7, 18)
 }
 
-fn shot_make_threshold(player: &Player, avg_defense: u8, three: bool, advantage: i16) -> u8 {
-    let base = if three { 33 } else { 47 };
-    let rating = if three {
-        player.ratings.shooting
+fn shot_make_threshold(
+    player: &Player,
+    contest: DefensiveContest,
+    three: bool,
+    advantage: i16,
+) -> u8 {
+    let base = if three {
+        player.ratings.three_point_pct as i16 - 3 - (contest.perimeter as i16 - 50) / 8
     } else {
-        ((player.ratings.offense as u16 + player.ratings.shooting as u16) / 2) as u8
+        player.ratings.two_point_pct as i16
+            - 6
+            - (contest.interior as i16 - 50) / 8
+            - (contest.perimeter as i16 - 50) / 12
+            + (player.ratings.inside_scoring as i16 - 50) / 20
     };
-    (base + (rating as i16 - avg_defense as i16) / 5 + advantage / 2).clamp(22, 68) as u8
+    (base + advantage / 2).clamp(if three { 25 } else { 38 }, if three { 48 } else { 67 }) as u8
 }
 
 fn credit_assist(
@@ -412,7 +468,7 @@ fn credit_assist(
     if lineup.len() <= 1 || !rng.gen_bool(0.58) {
         return;
     }
-    let mut passer_index = weighted_player_index(players, lineup, rng);
+    let mut passer_index = weighted_passing_index(players, lineup, rng);
     if passer_index == shooter_index {
         let shooter_slot = lineup
             .iter()
@@ -423,18 +479,75 @@ fn credit_assist(
     lines[passer_index].assists += 1;
 }
 
+fn weighted_passing_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha8Rng) -> usize {
+    let weights: Vec<u16> = lineup
+        .iter()
+        .map(|index| players[*index].ratings.passing as u16 + 5)
+        .collect();
+    let total: u16 = weights.iter().sum();
+    let mut ticket = rng.gen_range(0..total.max(1));
+    for (slot, weight) in weights.iter().enumerate() {
+        if ticket < *weight {
+            return lineup[slot];
+        }
+        ticket -= *weight;
+    }
+    lineup.last().copied().unwrap_or(0)
+}
+
 fn credit_rebound(
+    lines: &mut [PlayerGameStats],
+    defense_lines: &mut [PlayerGameStats],
+    offense: &[&Player],
+    offense_lineup: &[usize],
+    defense: &[&Player],
+    defense_lineup: &[usize],
+    rng: &mut ChaCha8Rng,
+) -> bool {
+    if offense_lineup.is_empty() || defense_lineup.is_empty() {
+        return false;
+    }
+    let offense_strength: u16 = offense_lineup
+        .iter()
+        .map(|index| {
+            offense[*index].ratings.offensive_rebounding as u16
+                + offense[*index].ratings.inside_scoring as u16 / 4
+        })
+        .sum();
+    let defense_strength: u16 = defense_lineup
+        .iter()
+        .map(|index| defense[*index].ratings.defensive_rebounding as u16)
+        .sum();
+    let offense_share = (25.0
+        + (offense_strength as f64 / offense_lineup.len() as f64
+            - defense_strength as f64 / defense_lineup.len() as f64)
+            * 0.18)
+        .clamp(15.0, 38.0);
+    if rng.gen_bool(offense_share / 100.0) {
+        credit_weighted_rebound(lines, offense, offense_lineup, true, rng);
+        true
+    } else {
+        credit_weighted_rebound(defense_lines, defense, defense_lineup, false, rng);
+        false
+    }
+}
+
+fn credit_weighted_rebound(
     lines: &mut [PlayerGameStats],
     players: &[&Player],
     lineup: &[usize],
+    offensive: bool,
     rng: &mut ChaCha8Rng,
 ) {
-    if lineup.is_empty() {
-        return;
-    }
     let weights: Vec<u16> = lineup
         .iter()
-        .map(|index| players[*index].ratings.rebounding as u16 + 10)
+        .map(|index| {
+            if offensive {
+                players[*index].ratings.offensive_rebounding as u16 + 5
+            } else {
+                players[*index].ratings.defensive_rebounding as u16 + 5
+            }
+        })
         .collect();
     let total: u16 = weights.iter().sum();
     let mut ticket = rng.gen_range(0..total.max(1));
@@ -467,13 +580,63 @@ fn starting_lineup(players: &[&Player]) -> Vec<usize> {
     lineup
 }
 
-fn player_overall(player: &Player) -> u16 {
-    (player.ratings.offense as u16
-        + player.ratings.defense as u16
-        + player.ratings.shooting as u16
-        + player.ratings.playmaking as u16
-        + player.ratings.rebounding as u16)
-        / 5
+pub fn player_overall(player: &Player) -> u16 {
+    let r = &player.ratings;
+    let value = match player.position {
+        crate::models::Position::PG => {
+            r.passing as u16 * 2
+                + r.ball_handling as u16 * 2
+                + r.steal as u16
+                + r.perimeter_defense as u16
+                + r.three_tendency as u16
+                + r.three_point_pct as u16
+                + r.inside_scoring as u16
+        }
+        crate::models::Position::SG => {
+            r.three_point_pct as u16 * 2
+                + r.three_tendency as u16 * 2
+                + r.ball_handling as u16
+                + r.perimeter_defense as u16
+                + r.inside_scoring as u16
+                + r.passing as u16
+        }
+        crate::models::Position::SF => {
+            r.two_point_pct as u16
+                + r.three_point_pct as u16
+                + r.inside_scoring as u16 * 2
+                + r.perimeter_defense as u16
+                + r.interior_defense as u16
+                + r.defensive_rebounding as u16
+                + r.passing as u16
+        }
+        crate::models::Position::PF => {
+            r.inside_scoring as u16 * 2
+                + r.two_point_pct as u16
+                + r.interior_defense as u16 * 2
+                + r.offensive_rebounding as u16
+                + r.defensive_rebounding as u16
+                + r.block as u16
+                + r.three_point_pct as u16
+        }
+        crate::models::Position::C => {
+            r.inside_scoring as u16 * 2
+                + r.two_point_pct as u16
+                + r.interior_defense as u16 * 2
+                + r.block as u16 * 2
+                + r.offensive_rebounding as u16
+                + r.defensive_rebounding as u16
+        }
+    };
+    value / 10
+}
+
+fn usage_weight(player: &Player) -> u16 {
+    let r = &player.ratings;
+    (r.inside_scoring as u16 * 2
+        + r.three_tendency as u16
+        + r.three_point_pct as u16
+        + r.two_point_pct as u16)
+        .max(1)
 }
 
 fn target_seconds(players: &[&Player]) -> Vec<f64> {
@@ -574,12 +737,7 @@ fn team_rating_from_players(players: &[&Player]) -> i16 {
     let mut total = 0i16;
     let mut count = 0i16;
     for player in players {
-        total += (player.ratings.offense as i16
-            + player.ratings.defense as i16
-            + player.ratings.shooting as i16
-            + player.ratings.playmaking as i16
-            + player.ratings.rebounding as i16)
-            / 5;
+        total += player_overall(player) as i16;
         count += 1;
     }
     if count == 0 { 50 } else { total / count }

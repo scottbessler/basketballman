@@ -3,7 +3,7 @@ use crate::models::{
     Position, Team,
 };
 use crate::repo::LeagueRepository;
-use crate::sim::{SimConfig, simulate_game, team_rating};
+use crate::sim::{SimConfig, player_overall, simulate_game, team_rating};
 use crate::stats::{next_unplayed_date_indices, player_season_stats, standings};
 use askama::Template;
 use axum::Router;
@@ -506,11 +506,19 @@ struct PlayerRow {
     name: String,
     position: String,
     age: u8,
-    offense: u8,
-    defense: u8,
-    shooting: u8,
-    playmaking: u8,
-    rebounding: u8,
+    two_point_pct: u8,
+    three_point_pct: u8,
+    ft_pct: u8,
+    inside_scoring: u8,
+    three_tendency: u8,
+    passing: u8,
+    ball_handling: u8,
+    perimeter_defense: u8,
+    interior_defense: u8,
+    steal: u8,
+    block: u8,
+    offensive_rebounding: u8,
+    defensive_rebounding: u8,
     overall: u8,
     games: u16,
     minutes: u16,
@@ -528,12 +536,7 @@ struct PlayerRow {
 
 impl PlayerRow {
     fn from_player(player: &Player, stats: Option<&PlayerSeasonStats>) -> Self {
-        let overall = ((player.ratings.offense as u16
-            + player.ratings.defense as u16
-            + player.ratings.shooting as u16
-            + player.ratings.playmaking as u16
-            + player.ratings.rebounding as u16)
-            / 5) as u8;
+        let overall = player_overall(player) as u8;
         let empty = PlayerSeasonStats {
             player_id: player.id.clone(),
             ..PlayerSeasonStats::default()
@@ -544,11 +547,19 @@ impl PlayerRow {
             name: player.name.clone(),
             position: position_name(player.position),
             age: player.age,
-            offense: player.ratings.offense,
-            defense: player.ratings.defense,
-            shooting: player.ratings.shooting,
-            playmaking: player.ratings.playmaking,
-            rebounding: player.ratings.rebounding,
+            two_point_pct: player.ratings.two_point_pct,
+            three_point_pct: player.ratings.three_point_pct,
+            ft_pct: player.ratings.ft_pct,
+            inside_scoring: player.ratings.inside_scoring,
+            three_tendency: player.ratings.three_tendency,
+            passing: player.ratings.passing,
+            ball_handling: player.ratings.ball_handling,
+            perimeter_defense: player.ratings.perimeter_defense,
+            interior_defense: player.ratings.interior_defense,
+            steal: player.ratings.steal,
+            block: player.ratings.block,
+            offensive_rebounding: player.ratings.offensive_rebounding,
+            defensive_rebounding: player.ratings.defensive_rebounding,
             overall,
             games: stats.games,
             minutes: stats.minutes,
