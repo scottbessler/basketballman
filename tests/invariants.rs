@@ -6,7 +6,9 @@ use basketballman::models::{Conference, GameStatus};
 use basketballman::models::{GameResult, PlayerGameStats};
 use basketballman::repo::LeagueRepository;
 use basketballman::routes::{AppState, app};
-use basketballman::sim::{PossessionEngine, SimConfig, simulate_game, simulation_input};
+use basketballman::sim::{
+    PossessionEngine, SimConfig, player_overall, simulate_game, simulation_input,
+};
 use basketballman::stats::{player_season_stats, standings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -200,14 +202,7 @@ fn possession_minutes_follow_on_floor_rotation() {
             .collect();
         players.sort_by_key(|player| {
             (
-                std::cmp::Reverse(
-                    (player.ratings.offense as u16
-                        + player.ratings.defense as u16
-                        + player.ratings.shooting as u16
-                        + player.ratings.playmaking as u16
-                        + player.ratings.rebounding as u16)
-                        / 5,
-                ),
+                std::cmp::Reverse(player_overall(player)),
                 player.id.as_str(),
             )
         });

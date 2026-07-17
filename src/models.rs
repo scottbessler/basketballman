@@ -100,11 +100,19 @@ impl std::fmt::Display for Position {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Ratings {
-    pub offense: u8,
-    pub defense: u8,
-    pub shooting: u8,
-    pub playmaking: u8,
-    pub rebounding: u8,
+    pub two_point_pct: u8,
+    pub three_point_pct: u8,
+    pub ft_pct: u8,
+    pub inside_scoring: u8,
+    pub three_tendency: u8,
+    pub passing: u8,
+    pub ball_handling: u8,
+    pub perimeter_defense: u8,
+    pub interior_defense: u8,
+    pub steal: u8,
+    pub block: u8,
+    pub offensive_rebounding: u8,
+    pub defensive_rebounding: u8,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

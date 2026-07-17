@@ -24,17 +24,27 @@ pub fn generate_league(seed: u64) -> League {
                 3 => Position::PF,
                 _ => Position::C,
             };
+            let talent = rng.gen_range(42..=92i16);
+            let flavor = position_flavor(position);
             players.push(Player {
                 id: player_id,
                 name: random_name(&mut rng),
                 age: rng.gen_range(19..=35),
                 position,
                 ratings: Ratings {
-                    offense: rng.gen_range(45..=99),
-                    defense: rng.gen_range(45..=99),
-                    shooting: rng.gen_range(45..=99),
-                    playmaking: rng.gen_range(45..=99),
-                    rebounding: rng.gen_range(45..=99),
+                    two_point_pct: percentage(talent, flavor[0], 42, 62, &mut rng),
+                    three_point_pct: percentage(talent, flavor[1], 28, 43, &mut rng),
+                    ft_pct: percentage(talent, flavor[2], 55, 95, &mut rng),
+                    inside_scoring: skill(talent, flavor[3], &mut rng),
+                    three_tendency: skill(talent, flavor[4], &mut rng),
+                    passing: skill(talent, flavor[5], &mut rng),
+                    ball_handling: skill(talent, flavor[6], &mut rng),
+                    perimeter_defense: skill(talent, flavor[7], &mut rng),
+                    interior_defense: skill(talent, flavor[8], &mut rng),
+                    steal: skill(talent, flavor[9], &mut rng),
+                    block: skill(talent, flavor[10], &mut rng),
+                    offensive_rebounding: skill(talent, flavor[11], &mut rng),
+                    defensive_rebounding: skill(talent, flavor[12], &mut rng),
                 },
                 team_id: team_id.clone(),
             });
@@ -62,6 +72,24 @@ pub fn generate_league(seed: u64) -> League {
         schedule,
         results: BTreeMap::new(),
     }
+}
+
+fn position_flavor(position: Position) -> [i16; 13] {
+    match position {
+        Position::C => [55, 22, 66, 82, 22, 42, 38, 34, 88, 30, 92, 88, 92],
+        Position::PF => [54, 34, 70, 70, 34, 52, 48, 48, 72, 42, 72, 78, 82],
+        Position::SF => [53, 50, 76, 58, 50, 62, 60, 62, 58, 56, 48, 58, 64],
+        Position::SG => [52, 66, 82, 44, 68, 52, 70, 68, 38, 68, 28, 38, 46],
+        Position::PG => [50, 68, 84, 38, 74, 84, 86, 78, 28, 78, 22, 25, 35],
+    }
+}
+
+fn skill(talent: i16, positional: i16, rng: &mut ChaCha8Rng) -> u8 {
+    (positional + (talent - 50) / 2 + rng.gen_range(-12..=12)).clamp(0, 99) as u8
+}
+
+fn percentage(talent: i16, positional: i16, min: i16, max: i16, rng: &mut ChaCha8Rng) -> u8 {
+    (positional + (talent - 50) / 3 + rng.gen_range(-3..=3)).clamp(min, max) as u8
 }
 
 fn random_name(rng: &mut ChaCha8Rng) -> String {

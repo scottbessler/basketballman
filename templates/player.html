@@ -60,8 +60,9 @@
       <h2>Ratings</h2>
       <div class="table-wrap">
         <table class="sortable">
-          <thead><tr><th>Off</th><th>Def</th><th>Shooting</th><th>Playmaking</th><th>Rebounding</th></tr></thead>
-          <tbody><tr><td>{{ player.offense }}</td><td>{{ player.defense }}</td><td>{{ player.shooting }}</td><td>{{ player.playmaking }}</td><td>{{ player.rebounding }}</td></tr></tbody>
+          <thead><tr><th colspan="3">Accuracy</th><th colspan="5">Scoring &amp; Creation</th><th colspan="5">Defense &amp; Rebounding</th></tr>
+            <tr><th>2P%</th><th>3P%</th><th>FT%</th><th>Inside</th><th>3PT Tend.</th><th>Passing</th><th>Handle</th><th>Perimeter</th><th>Interior</th><th>Steal</th><th>Block</th><th>OREB</th><th>DREB</th></tr></thead>
+          <tbody><tr><td>{{ player.two_point_pct }}%</td><td>{{ player.three_point_pct }}%</td><td>{{ player.ft_pct }}%</td><td>{{ player.inside_scoring }}</td><td>{{ player.three_tendency }}</td><td>{{ player.passing }}</td><td>{{ player.ball_handling }}</td><td>{{ player.perimeter_defense }}</td><td>{{ player.interior_defense }}</td><td>{{ player.steal }}</td><td>{{ player.block }}</td><td>{{ player.offensive_rebounding }}</td><td>{{ player.defensive_rebounding }}</td></tr></tbody>
         </table>
       </div>
     </section>
