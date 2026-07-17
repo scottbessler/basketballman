@@ -1,5 +1,5 @@
 use crate::models::{
-    Game, GameResult, GameStatus, League, Player, PlayerGameStats, Team, TeamStats,
+    Game, GameResult, GameStatus, League, PlayEvent, Player, PlayerGameStats, Team, TeamStats,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -93,11 +93,15 @@ impl PossessionEngine {
         let away_targets = target_seconds(&input.away_players);
         let mut home_score = 0u16;
         let mut away_score = 0u16;
+        let mut plays: Vec<PlayEvent> = Vec::new();
         let seconds_per_iteration = 2880.0 / possessions as f64;
 
-        for _ in 0..possessions {
+        for iteration in 0..possessions {
+            let home_elapsed = iteration as f64 * seconds_per_iteration;
+            let away_elapsed = home_elapsed + seconds_per_iteration / 2.0;
             credit_floor_time(&home_lineup, &mut home_seconds, seconds_per_iteration);
             credit_floor_time(&away_lineup, &mut away_seconds, seconds_per_iteration);
+            let events_before = plays.len();
             let home_points = simulate_possession(
                 &input.home_players,
                 &home_lineup,
@@ -107,6 +111,12 @@ impl PossessionEngine {
                 &mut away_lines,
                 input.config.home_advantage,
                 &mut rng,
+                &mut plays,
+                PossessionTeams {
+                    offense_team_id: &input.home_team.id,
+                    defense_team_id: &input.away_team.id,
+                },
+                home_elapsed,
             );
             apply_possession_plus_minus(
                 &mut home_lines,
@@ -117,6 +127,8 @@ impl PossessionEngine {
                 0,
             );
             home_score += home_points;
+            stamp_scores(&mut plays[events_before..], away_score, home_score);
+            let events_before = plays.len();
             let away_points = simulate_possession(
                 &input.away_players,
                 &away_lineup,
@@ -126,6 +138,12 @@ impl PossessionEngine {
                 &mut home_lines,
                 0,
                 &mut rng,
+                &mut plays,
+                PossessionTeams {
+                    offense_team_id: &input.away_team.id,
+                    defense_team_id: &input.home_team.id,
+                },
+                away_elapsed,
             );
             apply_possession_plus_minus(
                 &mut home_lines,
@@ -136,6 +154,7 @@ impl PossessionEngine {
                 away_points,
             );
             away_score += away_points;
+            stamp_scores(&mut plays[events_before..], away_score, home_score);
             substitute(
                 &mut home_lineup,
                 &home_seconds,
@@ -155,7 +174,7 @@ impl PossessionEngine {
 
         if home_score == away_score {
             if rng.gen_bool(0.5) {
-                add_points_to_best(&mut home_lines, 1);
+                let scorer = add_points_to_best(&mut home_lines, 1);
                 apply_possession_plus_minus(
                     &mut home_lines,
                     &home_lineup,
@@ -165,8 +184,16 @@ impl PossessionEngine {
                     0,
                 );
                 home_score += 1;
+                push_tiebreak_event(
+                    &mut plays,
+                    &input.home_team.id,
+                    &input.home_players,
+                    scorer,
+                    away_score,
+                    home_score,
+                );
             } else {
-                add_points_to_best(&mut away_lines, 1);
+                let scorer = add_points_to_best(&mut away_lines, 1);
                 apply_possession_plus_minus(
                     &mut home_lines,
                     &home_lineup,
@@ -176,12 +203,27 @@ impl PossessionEngine {
                     1,
                 );
                 away_score += 1;
+                push_tiebreak_event(
+                    &mut plays,
+                    &input.away_team.id,
+                    &input.away_players,
+                    scorer,
+                    away_score,
+                    home_score,
+                );
             }
         }
 
         let mut player_stats = home_lines;
         player_stats.extend(away_lines);
-        result_from_scores(input, home_score, away_score, possessions, player_stats)
+        result_from_scores(
+            input,
+            home_score,
+            away_score,
+            possessions,
+            player_stats,
+            plays,
+        )
     }
 }
 
@@ -195,6 +237,9 @@ fn simulate_possession(
     defense_lines: &mut [PlayerGameStats],
     advantage: i16,
     rng: &mut ChaCha8Rng,
+    plays: &mut Vec<PlayEvent>,
+    teams: PossessionTeams<'_>,
+    elapsed_seconds: f64,
 ) -> u16 {
     for _ in 0..=2 {
         let shooter_index = weighted_player_index(offense, offense_lineup, rng);
@@ -210,18 +255,33 @@ fn simulate_possession(
             lines[shooter_index].free_throws_attempted += attempts;
             lines[shooter_index].free_throws_made += made;
             lines[shooter_index].points += made;
+            push_event(
+                plays,
+                teams.offense_team_id,
+                elapsed_seconds,
+                format!(
+                    "{} makes {} of {} free throws",
+                    shooter.name, made, attempts
+                ),
+            );
             return made;
         }
 
         if rng.gen_range(0..100) < turnover_chance(shooter, contest.steal_pressure) {
             lines[shooter_index].turnovers += 1;
+            let mut description = format!("{} turnover", shooter.name);
             if rng.gen_bool(0.70)
                 && let Some(stealer) = weighted_defender_index(defense, defense_lineup, rng, |p| {
                     p.ratings.steal as u16
                 })
             {
                 defense_lines[stealer].steals += 1;
+                description = format!(
+                    "{} turnover ({} steals)",
+                    shooter.name, defense[stealer].name
+                );
             }
+            push_event(plays, teams.offense_team_id, elapsed_seconds, description);
             return 0;
         }
 
@@ -231,6 +291,7 @@ fn simulate_possession(
             .clamp(0.15, 0.45);
         let three = rng.gen_bool(three_probability);
         let make_threshold = shot_make_threshold(shooter, contest, three, advantage);
+        let shot_label = if three { "three point" } else { "two point" };
         lines[shooter_index].field_goals_attempted += 1;
         if three {
             lines[shooter_index].three_pointers_attempted += 1;
@@ -243,7 +304,15 @@ fn simulate_possession(
                 lines[shooter_index].three_pointers_made += 1;
             }
             lines[shooter_index].points += points;
-            credit_assist(offense, offense_lineup, lines, shooter_index, rng);
+            let passer = credit_assist(offense, offense_lineup, lines, shooter_index, rng);
+            let description = match passer {
+                Some(passer_index) => format!(
+                    "{} makes {} shot ({} assists)",
+                    shooter.name, shot_label, offense[passer_index].name
+                ),
+                None => format!("{} makes {} shot", shooter.name, shot_label),
+            };
+            push_event(plays, teams.offense_team_id, elapsed_seconds, description);
             return points;
         }
 
@@ -252,13 +321,19 @@ fn simulate_possession(
         } else {
             5 + contest.block_pressure / 8
         };
+        let mut description = format!("{} misses {} shot", shooter.name, shot_label);
         if rng.gen_range(0..100) < block_chance
             && let Some(blocker) =
                 weighted_defender_index(defense, defense_lineup, rng, |p| p.ratings.block as u16)
         {
             defense_lines[blocker].blocks += 1;
+            description = format!(
+                "{} blocks {}'s {} shot",
+                defense[blocker].name, shooter.name, shot_label
+            );
         }
-        if credit_rebound(
+        push_event(plays, teams.offense_team_id, elapsed_seconds, description);
+        match credit_rebound(
             lines,
             defense_lines,
             offense,
@@ -267,11 +342,86 @@ fn simulate_possession(
             defense_lineup,
             rng,
         ) {
-            continue;
+            Rebound::Offensive(rebounder) => {
+                push_event(
+                    plays,
+                    teams.offense_team_id,
+                    elapsed_seconds,
+                    format!("{} offensive rebound", offense[rebounder].name),
+                );
+                continue;
+            }
+            Rebound::Defensive(rebounder) => {
+                push_event(
+                    plays,
+                    teams.defense_team_id,
+                    elapsed_seconds,
+                    format!("{} defensive rebound", defense[rebounder].name),
+                );
+            }
+            Rebound::None => {}
         }
         return 0;
     }
     0
+}
+
+#[derive(Copy, Clone)]
+struct PossessionTeams<'a> {
+    offense_team_id: &'a str,
+    defense_team_id: &'a str,
+}
+
+fn push_event(
+    plays: &mut Vec<PlayEvent>,
+    team_id: &str,
+    elapsed_seconds: f64,
+    description: String,
+) {
+    let (quarter, clock) = game_clock(elapsed_seconds);
+    plays.push(PlayEvent {
+        quarter,
+        clock,
+        team_id: team_id.to_string(),
+        description,
+        away_score: 0,
+        home_score: 0,
+    });
+}
+
+fn stamp_scores(plays: &mut [PlayEvent], away_score: u16, home_score: u16) {
+    for play in plays {
+        play.away_score = away_score;
+        play.home_score = home_score;
+    }
+}
+
+fn push_tiebreak_event(
+    plays: &mut Vec<PlayEvent>,
+    team_id: &str,
+    players: &[&Player],
+    scorer: Option<usize>,
+    away_score: u16,
+    home_score: u16,
+) {
+    let Some(scorer) = scorer else {
+        return;
+    };
+    plays.push(PlayEvent {
+        quarter: 4,
+        clock: "0:00".to_string(),
+        team_id: team_id.to_string(),
+        description: format!("{} makes 1 of 1 free throws", players[scorer].name),
+        away_score,
+        home_score,
+    });
+}
+
+fn game_clock(elapsed_seconds: f64) -> (u8, String) {
+    let elapsed = elapsed_seconds.clamp(0.0, 2879.0);
+    let quarter = (elapsed / 720.0) as u8 + 1;
+    let remaining = (720.0 - elapsed % 720.0).ceil() as u16;
+    (quarter, format!("{}:{:02}", remaining / 60, remaining % 60))
 }
 
 fn weighted_defender_index(
@@ -304,6 +454,7 @@ fn result_from_scores(
     away_score: u16,
     possessions: u16,
     player_stats: Vec<PlayerGameStats>,
+    play_by_play: Vec<PlayEvent>,
 ) -> GameResult {
     let winner_team_id = if home_score > away_score {
         input.game.home_team_id.clone()
@@ -322,6 +473,7 @@ fn result_from_scores(
             defensive_rating: rating_to_u16(team_rating_from_players(&input.away_players)),
         }),
         player_stats: Some(player_stats),
+        play_by_play: Some(play_by_play),
     }
 }
 
@@ -464,9 +616,9 @@ fn credit_assist(
     lines: &mut [PlayerGameStats],
     shooter_index: usize,
     rng: &mut ChaCha8Rng,
-) {
+) -> Option<usize> {
     if lineup.len() <= 1 || !rng.gen_bool(0.58) {
-        return;
+        return None;
     }
     let mut passer_index = weighted_passing_index(players, lineup, rng);
     if passer_index == shooter_index {
@@ -477,6 +629,7 @@ fn credit_assist(
         passer_index = lineup[(shooter_slot + 1) % lineup.len()];
     }
     lines[passer_index].assists += 1;
+    Some(passer_index)
 }
 
 fn weighted_passing_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha8Rng) -> usize {
@@ -503,9 +656,9 @@ fn credit_rebound(
     defense: &[&Player],
     defense_lineup: &[usize],
     rng: &mut ChaCha8Rng,
-) -> bool {
+) -> Rebound {
     if offense_lineup.is_empty() || defense_lineup.is_empty() {
-        return false;
+        return Rebound::None;
     }
     let offense_strength: u16 = offense_lineup
         .iter()
@@ -524,12 +677,23 @@ fn credit_rebound(
             * 0.18)
         .clamp(15.0, 38.0);
     if rng.gen_bool(offense_share / 100.0) {
-        credit_weighted_rebound(lines, offense, offense_lineup, true, rng);
-        true
+        match credit_weighted_rebound(lines, offense, offense_lineup, true, rng) {
+            Some(rebounder) => Rebound::Offensive(rebounder),
+            None => Rebound::None,
+        }
     } else {
-        credit_weighted_rebound(defense_lines, defense, defense_lineup, false, rng);
-        false
+        match credit_weighted_rebound(defense_lines, defense, defense_lineup, false, rng) {
+            Some(rebounder) => Rebound::Defensive(rebounder),
+            None => Rebound::None,
+        }
     }
+}
+
+#[derive(Copy, Clone)]
+enum Rebound {
+    Offensive(usize),
+    Defensive(usize),
+    None,
 }
 
 fn credit_weighted_rebound(
@@ -538,7 +702,7 @@ fn credit_weighted_rebound(
     lineup: &[usize],
     offensive: bool,
     rng: &mut ChaCha8Rng,
-) {
+) -> Option<usize> {
     let weights: Vec<u16> = lineup
         .iter()
         .map(|index| {
@@ -554,18 +718,20 @@ fn credit_weighted_rebound(
     for (slot, weight) in weights.iter().enumerate() {
         if ticket < *weight {
             lines[lineup[slot]].rebounds += 1;
-            return;
+            return Some(lineup[slot]);
         }
         ticket -= *weight;
     }
+    None
 }
 
-fn add_points_to_best(lines: &mut [PlayerGameStats], points: u16) {
-    if let Some(line) = lines.iter_mut().max_by_key(|line| line.minutes) {
-        line.points += points;
-        line.free_throws_attempted += points;
-        line.free_throws_made += points;
-    }
+fn add_points_to_best(lines: &mut [PlayerGameStats], points: u16) -> Option<usize> {
+    let index = (0..lines.len()).max_by_key(|index| lines[*index].minutes)?;
+    let line = &mut lines[index];
+    line.points += points;
+    line.free_throws_attempted += points;
+    line.free_throws_made += points;
+    Some(index)
 }
 
 fn starting_lineup(players: &[&Player]) -> Vec<usize> {

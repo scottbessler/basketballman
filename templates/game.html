@@ -29,7 +29,11 @@
       </div>
     </section>
     {% if played %}
-      <section class="box-score">
+      <div class="tabs" data-tabs role="tablist">
+        <button type="button" class="tab active" data-tab="box-score" role="tab" aria-selected="true">Box Score</button>
+        <button type="button" class="tab" data-tab="play-by-play" role="tab" aria-selected="false">Play-By-Play</button>
+      </div>
+      <section class="box-score" data-tab-panel="box-score">
         <h2>Box Score</h2>
         {% for team in teams %}
           <article class="panel team-details">
@@ -83,6 +87,37 @@
             </div>
           </article>
         {% endfor %}
+      </section>
+      <section class="pbp" data-tab-panel="play-by-play" hidden>
+        <h2>Play-By-Play</h2>
+        {% if has_pbp %}
+          {% for quarter in pbp_quarters %}
+            <article class="panel team-details">
+              <h3>{{ quarter.label }}</h3>
+              <div class="table-wrap">
+                <table class="pbp-table">
+                  <thead>
+                    <tr><th>Time</th><th>Team</th><th>Play</th><th>Score</th></tr>
+                  </thead>
+                  <tbody>
+                  {% for play in quarter.plays %}
+                    <tr>
+                      <td class="pbp-clock">{{ play.clock }}</td>
+                      <td>{{ play.team }}</td>
+                      <td class="pbp-play">{{ play.description }}</td>
+                      <td class="pbp-score">{{ play.score }}</td>
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          {% endfor %}
+        {% else %}
+          <article class="panel">
+            <p class="muted">No play-by-play log is available for this game.</p>
+          </article>
+        {% endif %}
       </section>
     {% else %}
       <section class="panel">

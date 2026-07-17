@@ -356,6 +356,49 @@ table.sortable thead th[aria-sort="descending"]::before {
   font-weight: 800;
 }
 
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.tab {
+  border: 1px solid #cdd6d3;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.pbp {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pbp-table {
+  width: 100%;
+}
+
+.pbp-clock,
+.pbp-score {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pbp-play {
+  width: 100%;
+}
+
 .scoreline {
   display: flex;
   gap: 10px;
