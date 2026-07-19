@@ -3,7 +3,9 @@ use crate::models::{
     Conference, Game, GameResult, GameStatus, League, Player, PlayerGameStats, PlayerSeasonStats,
     Position, Team, TradeStatus,
 };
-use crate::playoffs::{advance_playoff_day, champion, regular_season_complete, start_playoffs};
+use crate::playoffs::{
+    REGULAR_SEASON_DATES, advance_playoff_day, champion, regular_season_complete, start_playoffs,
+};
 use crate::repo::LeagueRepository;
 use crate::session::{AuthUser, MaybeUser};
 use crate::sim::{SimConfig, player_overall, simulate_game, team_rating};
@@ -687,11 +689,19 @@ impl StandingsTemplate {
             .map(|day| day.to_string())
             .unwrap_or_else(|| "-".to_string());
 
+        let regular_season: Vec<_> = league
+            .schedule
+            .iter()
+            .filter(|game| game.date_index <= REGULAR_SEASON_DATES)
+            .collect();
         Self {
             east,
             west,
-            played: league.results.len(),
-            games: league.schedule.len(),
+            played: regular_season
+                .iter()
+                .filter(|game| game.status == GameStatus::Played)
+                .count(),
+            games: regular_season.len(),
             next_day,
         }
     }

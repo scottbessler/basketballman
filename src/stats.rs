@@ -1,4 +1,5 @@
 use crate::models::{GameStatus, League, PlayerGameStats, PlayerId, PlayerSeasonStats, TeamId};
+use crate::playoffs::REGULAR_SEASON_DATES;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +54,9 @@ pub fn standings(league: &League) -> BTreeMap<TeamId, TeamRecord> {
         else {
             continue;
         };
+        if game.date_index > REGULAR_SEASON_DATES {
+            continue;
+        }
         add_result(
             records.get_mut(&game.home_team_id).expect("home record"),
             result.home_score,
@@ -94,6 +98,14 @@ pub fn player_season_stats(league: &League) -> BTreeMap<PlayerId, PlayerSeasonSt
         .collect();
 
     for result in league.results.values() {
+        let regular_season = league
+            .schedule
+            .iter()
+            .find(|game| game.id == result.game_id)
+            .is_some_and(|game| game.date_index <= REGULAR_SEASON_DATES);
+        if !regular_season {
+            continue;
+        }
         let Some(player_stats) = &result.player_stats else {
             continue;
         };
