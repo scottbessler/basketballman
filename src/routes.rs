@@ -637,13 +637,21 @@ impl IndexTemplate {
         leaders.sort_by_key(|leader| Reverse(leader.rating));
         leaders.truncate(8);
 
+        let regular_season: Vec<_> = league
+            .schedule
+            .iter()
+            .filter(|game| game.date_index <= REGULAR_SEASON_DATES)
+            .collect();
         Self {
             league_name: league.name.clone(),
             season: league.season,
             teams: league.teams.len(),
             players: league.players.len(),
-            games: league.schedule.len(),
-            played: league.results.len(),
+            games: regular_season.len(),
+            played: regular_season
+                .iter()
+                .filter(|game| game.status == GameStatus::Played)
+                .count(),
             leaders,
         }
     }
