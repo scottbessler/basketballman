@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign In - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+      <a href="/playoffs">Playoffs</a>
+      <a href="/trades">Trades</a>
+      <a href="/me">My Team</a>
+    </div>
+  </nav>
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">Owners</p>
+        <h1>Sign In</h1>
+      </div>
+    </section>
+    <p id="auth-error" class="auth-error" hidden></p>
+    <section class="panel">
+      <h2>Sign in with a passkey</h2>
+      <form id="login-form" class="auth-form">
+        <label>Username
+          <input name="username" autocomplete="username webauthn" required maxlength="32">
+        </label>
+        <button type="submit" class="button">Sign In</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h2>Create an account</h2>
+      <p class="muted">Register once with a passkey, then claim a team to manage its lineup and trades.</p>
+      <form id="register-form" class="auth-form">
+        <label>Username
+          <input name="username" autocomplete="username" required maxlength="32">
+        </label>
+        <label>Display name (optional)
+          <input name="display_name" maxlength="48">
+        </label>
+        <button type="submit" class="button">Register</button>
+      </form>
+    </section>
+    <section class="panel">
+      <form method="post" action="/auth/logout">
+        <button type="submit" class="button">Sign Out</button>
+      </form>
+    </section>
+  </main>
+  <script src="/static/auth.js"></script>
+</body>
+</html>

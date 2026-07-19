@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 pub type TeamId = String;
 pub type PlayerId = String;
 pub type GameId = String;
+pub type TradeId = String;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct League {
@@ -15,6 +17,10 @@ pub struct League {
     pub players: Vec<Player>,
     pub schedule: Vec<Game>,
     pub results: BTreeMap<GameId, GameResult>,
+    #[serde(default)]
+    pub trades: Vec<TradeOffer>,
+    #[serde(default)]
+    pub playoffs: Option<Playoffs>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -25,6 +31,14 @@ pub struct Team {
     pub conference: Conference,
     pub division: Division,
     pub roster: Vec<PlayerId>,
+    #[serde(default)]
+    pub owner_user_id: Option<Uuid>,
+    /// Player ids the owner has designated as starters (exactly 5 when set).
+    #[serde(default)]
+    pub starters: Vec<PlayerId>,
+    /// Per-player minute targets (0-48) that steer the rotation.
+    #[serde(default)]
+    pub minute_targets: BTreeMap<PlayerId, u16>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -129,6 +143,81 @@ pub struct Game {
 pub enum GameStatus {
     Scheduled,
     Played,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TradeOffer {
+    pub id: TradeId,
+    pub from_team_id: TeamId,
+    pub to_team_id: TeamId,
+    pub offered_player_ids: Vec<PlayerId>,
+    pub requested_player_ids: Vec<PlayerId>,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub status: TradeStatus,
+    /// Note attached by the receiving owner when rejecting or countering.
+    #[serde(default)]
+    pub response_note: Option<String>,
+    /// When this offer is a counter, the id of the offer it replaces.
+    #[serde(default)]
+    pub counter_of: Option<TradeId>,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum TradeStatus {
+    Pending,
+    Accepted,
+    Rejected,
+    Withdrawn,
+    Countered,
+}
+
+impl std::fmt::Display for TradeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Pending => "Pending",
+            Self::Accepted => "Accepted",
+            Self::Rejected => "Rejected",
+            Self::Withdrawn => "Withdrawn",
+            Self::Countered => "Countered",
+        };
+        write!(f, "{name}")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Playoffs {
+    pub season: u16,
+    pub rounds: Vec<PlayoffRound>,
+    /// Next playoff date index (continues after the regular season).
+    pub next_date_index: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PlayoffRound {
+    pub number: u8,
+    pub name: String,
+    pub series: Vec<PlayoffSeries>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PlayoffSeries {
+    pub id: String,
+    pub conference: Option<Conference>,
+    pub high_seed: u8,
+    pub low_seed: u8,
+    pub high_team_id: TeamId,
+    pub low_team_id: TeamId,
+    pub game_ids: Vec<GameId>,
+    pub high_wins: u8,
+    pub low_wins: u8,
+    pub winner_team_id: Option<TeamId>,
+}
+
+impl PlayoffSeries {
+    pub fn finished(&self) -> bool {
+        self.winner_team_id.is_some()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
