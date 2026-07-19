@@ -87,10 +87,10 @@ impl PossessionEngine {
         let mut away_lines = empty_player_lines(input.away_team, &input.away_players);
         let mut home_seconds = vec![0.0; input.home_players.len()];
         let mut away_seconds = vec![0.0; input.away_players.len()];
-        let mut home_lineup = starting_lineup(&input.home_players);
-        let mut away_lineup = starting_lineup(&input.away_players);
-        let home_targets = target_seconds(&input.home_players);
-        let away_targets = target_seconds(&input.away_players);
+        let mut home_lineup = starting_lineup(input.home_team, &input.home_players);
+        let mut away_lineup = starting_lineup(input.away_team, &input.away_players);
+        let home_targets = target_seconds(input.home_team, &input.home_players);
+        let away_targets = target_seconds(input.away_team, &input.away_players);
         let mut home_score = 0u16;
         let mut away_score = 0u16;
         let mut plays: Vec<PlayEvent> = Vec::new();
@@ -734,7 +734,21 @@ fn add_points_to_best(lines: &mut [PlayerGameStats], points: u16) -> Option<usiz
     Some(index)
 }
 
-fn starting_lineup(players: &[&Player]) -> Vec<usize> {
+fn starting_lineup(team: &Team, players: &[&Player]) -> Vec<usize> {
+    if team.starters.len() == 5 {
+        let chosen: Vec<usize> = team
+            .starters
+            .iter()
+            .filter_map(|starter_id| players.iter().position(|player| &player.id == starter_id))
+            .collect();
+        if chosen.len() == 5 {
+            return chosen;
+        }
+    }
+    auto_starting_lineup(players)
+}
+
+fn auto_starting_lineup(players: &[&Player]) -> Vec<usize> {
     let mut lineup: Vec<usize> = (0..players.len()).collect();
     lineup.sort_by_key(|index| {
         (
@@ -748,52 +762,58 @@ fn starting_lineup(players: &[&Player]) -> Vec<usize> {
 
 pub fn player_overall(player: &Player) -> u16 {
     let r = &player.ratings;
-    let value = match player.position {
-        crate::models::Position::PG => {
+    // (weighted rating sum, weight total) per position.
+    let (value, weight) = match player.position {
+        crate::models::Position::PG => (
             r.passing as u16 * 2
                 + r.ball_handling as u16 * 2
                 + r.steal as u16
                 + r.perimeter_defense as u16
                 + r.three_tendency as u16
                 + r.three_point_pct as u16
-                + r.inside_scoring as u16
-        }
-        crate::models::Position::SG => {
+                + r.inside_scoring as u16,
+            9,
+        ),
+        crate::models::Position::SG => (
             r.three_point_pct as u16 * 2
                 + r.three_tendency as u16 * 2
                 + r.ball_handling as u16
                 + r.perimeter_defense as u16
                 + r.inside_scoring as u16
-                + r.passing as u16
-        }
-        crate::models::Position::SF => {
+                + r.passing as u16,
+            8,
+        ),
+        crate::models::Position::SF => (
             r.two_point_pct as u16
                 + r.three_point_pct as u16
                 + r.inside_scoring as u16 * 2
                 + r.perimeter_defense as u16
                 + r.interior_defense as u16
                 + r.defensive_rebounding as u16
-                + r.passing as u16
-        }
-        crate::models::Position::PF => {
+                + r.passing as u16,
+            8,
+        ),
+        crate::models::Position::PF => (
             r.inside_scoring as u16 * 2
                 + r.two_point_pct as u16
                 + r.interior_defense as u16 * 2
                 + r.offensive_rebounding as u16
                 + r.defensive_rebounding as u16
                 + r.block as u16
-                + r.three_point_pct as u16
-        }
-        crate::models::Position::C => {
+                + r.three_point_pct as u16,
+            9,
+        ),
+        crate::models::Position::C => (
             r.inside_scoring as u16 * 2
                 + r.two_point_pct as u16
                 + r.interior_defense as u16 * 2
                 + r.block as u16 * 2
                 + r.offensive_rebounding as u16
-                + r.defensive_rebounding as u16
-        }
+                + r.defensive_rebounding as u16,
+            9,
+        ),
     };
-    value / 10
+    value / weight
 }
 
 fn usage_weight(player: &Player) -> u16 {
@@ -805,7 +825,29 @@ fn usage_weight(player: &Player) -> u16 {
         .max(1)
 }
 
-fn target_seconds(players: &[&Player]) -> Vec<f64> {
+fn target_seconds(team: &Team, players: &[&Player]) -> Vec<f64> {
+    let mut seconds = auto_target_seconds(players);
+    if team.minute_targets.is_empty() {
+        return seconds;
+    }
+    for (index, player) in players.iter().enumerate() {
+        if let Some(minutes) = team.minute_targets.get(&player.id) {
+            seconds[index] = (*minutes).min(48) as f64 * 60.0;
+        }
+    }
+    let total: f64 = seconds.iter().sum();
+    if total <= 0.0 {
+        return auto_target_seconds(players);
+    }
+    // Rescale so the rotation still fills exactly five positions of floor time.
+    let scale = 5.0 * 2880.0 / total;
+    for value in &mut seconds {
+        *value *= scale;
+    }
+    seconds
+}
+
+fn auto_target_seconds(players: &[&Player]) -> Vec<f64> {
     let mut weights = vec![0.0; players.len()];
     let mut ranked: Vec<usize> = (0..players.len()).collect();
     ranked.sort_by_key(|index| {

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playoffs - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+      <a href="/playoffs">Playoffs</a>
+      <a href="/trades">Trades</a>
+      <a href="/me">My Team</a>
+    </div>
+  </nav>
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">Postseason</p>
+        <h1>Playoffs</h1>
+      </div>
+      {% if finished %}
+      <div class="status">Champion: {{ champion }}</div>
+      {% endif %}
+    </section>
+    {% if !started %}
+    <section class="panel">
+      {% if can_start %}
+      <p>The regular season is complete. The 8 best teams in each conference qualify; every series is best of 7.</p>
+      <form method="post" action="/playoffs/start">
+        <button type="submit" class="button">Start Playoffs</button>
+      </form>
+      {% else %}
+      <p class="muted">The playoffs begin once every regular-season game has been played. The 8 best teams in each conference qualify; every series is best of 7.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% if started && !finished %}
+    <section class="panel">
+      <form method="post" action="/playoffs/sim">
+        <button type="submit" class="button">Sim Playoff Day</button>
+      </form>
+    </section>
+    {% endif %}
+    {% for round in rounds %}
+    <section class="panel">
+      <h2>{{ round.name }}</h2>
+      <div class="series-grid">
+      {% for series in round.series %}
+        <div class="trade-card">
+          <p class="eyebrow">{{ series.label }}</p>
+          <p>
+            <strong>{{ series.high_team }}</strong> {{ series.high_wins }} - {{ series.low_wins }} <strong>{{ series.low_team }}</strong>
+            {% if series.finished %}
+            <span class="status">{{ series.winner }} win</span>
+            {% endif %}
+          </p>
+          <p class="muted">
+          {% for game in series.games %}
+            <a href="/games/{{ game.id }}">G{{ game.number }}: {{ game.score }}</a>{% if !loop.last %} &middot; {% endif %}
+          {% endfor %}
+          </p>
+        </div>
+      {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </main>
+</body>
+</html>

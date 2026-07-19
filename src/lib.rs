@@ -1,8 +1,13 @@
+pub mod auth;
 pub mod config;
 pub mod generator;
 pub mod models;
+pub mod playoffs;
 pub mod repo;
 pub mod routes;
 pub mod schedule;
+pub mod session;
 pub mod sim;
 pub mod stats;
+pub mod trades;
+pub mod users;

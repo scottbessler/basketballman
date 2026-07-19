@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Propose Trade - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+      <a href="/playoffs">Playoffs</a>
+      <a href="/trades">Trades</a>
+      <a href="/me">My Team</a>
+    </div>
+  </nav>
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">{% if !counter_of.is_empty() %}Counter Offer{% else %}New Trade{% endif %}</p>
+        <h1>{{ from_team }} &rarr; {{ to_team }}</h1>
+      </div>
+    </section>
+    <form method="post" action="/trades">
+      <input type="hidden" name="to_team" value="{{ to_team_id }}">
+      <input type="hidden" name="counter_of" value="{{ counter_of }}">
+      <section class="panel">
+        <h2>You Send ({{ from_team }})</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Player</th><th>Pos</th><th>OVR</th></tr></thead>
+            <tbody>
+            {% for player in my_players %}
+              <tr>
+                <td><input type="checkbox" name="offer" value="{{ player.id }}"></td>
+                <td>{{ player.name }}</td>
+                <td>{{ player.position }}</td>
+                <td>{{ player.overall }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>You Receive ({{ to_team }})</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Player</th><th>Pos</th><th>OVR</th></tr></thead>
+            <tbody>
+            {% for player in their_players %}
+              <tr>
+                <td><input type="checkbox" name="request" value="{{ player.id }}"></td>
+                <td>{{ player.name }}</td>
+                <td>{{ player.position }}</td>
+                <td>{{ player.overall }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <label>Note to the other owner
+          <textarea name="note" maxlength="280" rows="3" placeholder="Optional message with your offer"></textarea>
+        </label>
+        <button type="submit" class="button">Send Offer</button>
+      </section>
+    </form>
+  </main>
+</body>
+</html>

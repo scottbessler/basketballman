@@ -1,19 +1,25 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use axum_extra::extract::cookie::Key;
 use basketballman::config::{NBA_NICKNAMES, TEAM_SEEDS};
 use basketballman::generator::generate_league;
-use basketballman::models::{Conference, GameStatus};
+use basketballman::models::{Conference, GameStatus, League, TradeStatus};
 use basketballman::models::{GameResult, PlayerGameStats};
+use basketballman::playoffs::{advance_playoff_day, champion, regular_season_complete};
 use basketballman::repo::LeagueRepository;
 use basketballman::routes::{AppState, app};
 use basketballman::sim::{
-    PossessionEngine, SimConfig, player_overall, simulate_game, simulation_input,
+    PossessionEngine, SimConfig, player_overall, simulate_game, simulation_input, team_rating,
 };
 use basketballman::stats::{player_season_stats, standings};
+use basketballman::trades::{accept_trade, validate_offer};
+use basketballman::users::UserStore;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
+use webauthn_rs::WebauthnBuilder;
+use webauthn_rs::prelude::Url;
 
 #[test]
 fn default_league_shape_and_names_match_spec() {
@@ -342,11 +348,7 @@ async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     let repo = LeagueRepository::new(&path);
     let league = repo.load_or_generate(7).expect("generate");
     let game_id = league.schedule[0].id.clone();
-    let state = AppState {
-        repo: repo.clone(),
-        league: Arc::new(Mutex::new(league)),
-    };
-    let app = app(state);
+    let app = app(test_state(repo.clone(), league));
 
     let response = app
         .clone()
@@ -457,6 +459,250 @@ async fn ssr_routes_work_without_javascript_and_sim_ranges_persist() {
     assert!(loaded.results.is_empty());
 
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn team_overall_ratings_form_wide_bell_curve() {
+    for seed in [7u64, 42, 99] {
+        let league = generate_league(seed);
+        let ratings: Vec<i16> = league
+            .teams
+            .iter()
+            .map(|team| team_rating(&league, team))
+            .collect();
+        let min = *ratings.iter().min().unwrap();
+        let max = *ratings.iter().max().unwrap();
+        let mean: f64 = ratings.iter().map(|r| f64::from(*r)).sum::<f64>() / 32.0;
+        assert!(
+            (58..=68).contains(&min),
+            "seed {seed}: min rating {min} out of range"
+        );
+        assert!(
+            (76..=86).contains(&max),
+            "seed {seed}: max rating {max} out of range"
+        );
+        assert!(
+            max - min >= 12,
+            "seed {seed}: spread {} too small",
+            max - min
+        );
+        assert!(
+            (69.0..=75.0).contains(&mean),
+            "seed {seed}: mean rating {mean} out of range"
+        );
+    }
+}
+
+fn play_regular_season(league: &mut League) {
+    let game_ids: Vec<String> = league.schedule.iter().map(|game| game.id.clone()).collect();
+    for game_id in game_ids {
+        simulate_game(league, &game_id, SimConfig::default());
+    }
+}
+
+#[test]
+fn playoffs_run_best_of_seven_to_a_champion() {
+    let mut league = generate_league(7);
+    assert!(!regular_season_complete(&league));
+    assert!(!advance_playoff_day(&mut league, SimConfig::default()));
+
+    play_regular_season(&mut league);
+    assert!(regular_season_complete(&league));
+
+    let mut days = 0;
+    while advance_playoff_day(&mut league, SimConfig::default()) {
+        days += 1;
+        assert!(days < 200, "playoffs should terminate");
+    }
+
+    let playoffs = league.playoffs.as_ref().expect("playoffs");
+    assert_eq!(playoffs.rounds.len(), 4);
+    assert_eq!(playoffs.rounds[0].series.len(), 8);
+    assert_eq!(playoffs.rounds[1].series.len(), 4);
+    assert_eq!(playoffs.rounds[2].series.len(), 2);
+    assert_eq!(playoffs.rounds[3].series.len(), 1);
+
+    for round in &playoffs.rounds {
+        for series in &round.series {
+            let winner_wins = series.high_wins.max(series.low_wins);
+            let loser_wins = series.high_wins.min(series.low_wins);
+            assert_eq!(winner_wins, 4, "series should end at 4 wins");
+            assert!(loser_wins < 4);
+            assert_eq!(
+                series.game_ids.len(),
+                (winner_wins + loser_wins) as usize,
+                "one game per series win"
+            );
+            assert!(series.winner_team_id.is_some());
+            for game_id in &series.game_ids {
+                assert!(league.results.contains_key(game_id));
+            }
+        }
+    }
+
+    let first_round_teams: BTreeSet<&str> = playoffs.rounds[0]
+        .series
+        .iter()
+        .flat_map(|series| [series.high_team_id.as_str(), series.low_team_id.as_str()])
+        .collect();
+    assert_eq!(first_round_teams.len(), 16);
+    for conference in [Conference::East, Conference::West] {
+        let count = playoffs.rounds[0]
+            .series
+            .iter()
+            .filter(|series| series.conference == Some(conference))
+            .count();
+        assert_eq!(count, 4, "{conference:?} should have 4 first-round series");
+    }
+
+    let champ = champion(&league).expect("champion");
+    assert!(league.teams.iter().any(|team| team.id == champ));
+}
+
+#[test]
+fn accepted_trade_swaps_rosters_and_updates_players() {
+    let mut league = generate_league(7);
+    let user_a = uuid::Uuid::new_v4();
+    let user_b = uuid::Uuid::new_v4();
+    league.teams[0].owner_user_id = Some(user_a);
+    league.teams[1].owner_user_id = Some(user_b);
+    let offered = league.teams[0].roster[0].clone();
+    let requested = league.teams[1].roster[0].clone();
+    league.teams[0].starters = league.teams[0].roster[..5].to_vec();
+    league.teams[0].minute_targets.insert(offered.clone(), 36);
+
+    let from = league.teams[0].id.clone();
+    let to = league.teams[1].id.clone();
+    validate_offer(
+        &league,
+        &from,
+        &to,
+        std::slice::from_ref(&offered),
+        std::slice::from_ref(&requested),
+    )
+    .expect("valid offer");
+    // Offering a player the team does not have is rejected.
+    assert!(
+        validate_offer(
+            &league,
+            &from,
+            &to,
+            std::slice::from_ref(&requested),
+            std::slice::from_ref(&offered),
+        )
+        .is_err()
+    );
+
+    league.trades.push(basketballman::models::TradeOffer {
+        id: "tr0001".to_string(),
+        from_team_id: from.clone(),
+        to_team_id: to.clone(),
+        offered_player_ids: vec![offered.clone()],
+        requested_player_ids: vec![requested.clone()],
+        note: Some("deal?".to_string()),
+        status: TradeStatus::Pending,
+        response_note: None,
+        counter_of: None,
+    });
+    accept_trade(&mut league, "tr0001").expect("accept");
+
+    assert_eq!(league.trades[0].status, TradeStatus::Accepted);
+    assert!(!league.teams[0].roster.contains(&offered));
+    assert!(league.teams[0].roster.contains(&requested));
+    assert!(league.teams[1].roster.contains(&offered));
+    assert!(!league.teams[1].roster.contains(&requested));
+    assert!(!league.teams[0].starters.contains(&offered));
+    assert!(!league.teams[0].minute_targets.contains_key(&offered));
+    let moved = league
+        .players
+        .iter()
+        .find(|player| player.id == offered)
+        .unwrap();
+    assert_eq!(moved.team_id, to);
+
+    // A second acceptance of the same trade is rejected.
+    assert!(accept_trade(&mut league, "tr0001").is_err());
+}
+
+#[test]
+fn custom_starters_and_minute_targets_shape_rotation() {
+    let mut league = generate_league(7);
+    let game = league.schedule[0].clone();
+    let home_id = game.home_team_id.clone();
+    let team_index = league
+        .teams
+        .iter()
+        .position(|team| team.id == home_id)
+        .unwrap();
+
+    let mut roster: Vec<_> = league.teams[team_index]
+        .roster
+        .iter()
+        .filter_map(|player_id| league.players.iter().find(|player| &player.id == player_id))
+        .collect();
+    roster.sort_by_key(|player| (player_overall(player), player.id.clone()));
+    // Start the five worst players and give the single worst a heavy load.
+    let starters: Vec<String> = roster
+        .iter()
+        .take(5)
+        .map(|player| player.id.clone())
+        .collect();
+    let workhorse = starters[0].clone();
+    let benched = roster.last().unwrap().id.clone();
+
+    let team = &mut league.teams[team_index];
+    team.starters = starters.clone();
+    for starter in &starters {
+        team.minute_targets.insert(starter.clone(), 40);
+    }
+    team.minute_targets.insert(benched.clone(), 0);
+    let _ = workhorse;
+
+    let result = simulate_game(&mut league, &game.id, SimConfig::default()).expect("result");
+    let lines = result.player_stats.as_ref().expect("player stats");
+    let team_lines: Vec<_> = lines
+        .iter()
+        .filter(|line| line.team_id == home_id)
+        .collect();
+
+    let starter_minutes: u16 = team_lines
+        .iter()
+        .filter(|line| starters.contains(&line.player_id))
+        .map(|line| line.minutes)
+        .sum();
+    let benched_minutes: u16 = team_lines
+        .iter()
+        .filter(|line| line.player_id == benched)
+        .map(|line| line.minutes)
+        .sum();
+    assert!(
+        starter_minutes > 140,
+        "chosen starters should dominate minutes, got {starter_minutes}"
+    );
+    assert!(
+        benched_minutes < 12,
+        "benched player should barely play, got {benched_minutes}"
+    );
+    let total: u16 = team_lines.iter().map(|line| line.minutes).sum();
+    assert!((239..=241).contains(&total), "total minutes {total}");
+}
+
+fn test_state(repo: LeagueRepository, league: League) -> AppState {
+    let users_dir = temp_path("users");
+    std::fs::create_dir_all(&users_dir).unwrap();
+    let rp_origin = Url::parse("http://localhost:3000").unwrap();
+    let webauthn = WebauthnBuilder::new("localhost", &rp_origin)
+        .unwrap()
+        .build()
+        .unwrap();
+    AppState {
+        repo,
+        league: Arc::new(Mutex::new(league)),
+        users: Arc::new(UserStore::load(&users_dir).unwrap()),
+        webauthn: Arc::new(webauthn),
+        key: Key::generate(),
+        passkey_disabled: true,
+    }
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {

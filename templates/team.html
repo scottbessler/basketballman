@@ -15,6 +15,9 @@
       <a href="/standings">Standings</a>
       <a href="/teams">Teams</a>
       <a href="/schedule">Schedule</a>
+      <a href="/playoffs">Playoffs</a>
+      <a href="/trades">Trades</a>
+      <a href="/me">My Team</a>
     </div>
   </nav>
   <main class="page player">
@@ -25,6 +28,57 @@
       </div>
       <div class="status">Rating {{ team.rating }}</div>
     </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Front Office</h2>
+        {% if owned %}
+        <span class="status">Managed by {{ owner_name }}</span>
+        {% else %}
+        <span class="status">No owner</span>
+        {% endif %}
+      </div>
+      {% if can_claim %}
+      <form method="post" action="/teams/{{ team.id }}/claim">
+        <button type="submit" class="button">Claim This Team</button>
+      </form>
+      {% endif %}
+      {% if !signed_in && !owned %}
+      <p class="muted"><a href="/login">Sign in</a> to claim and manage this team.</p>
+      {% endif %}
+      {% if can_propose %}
+      <a class="button" href="/trades/new?team={{ team.id }}">Propose Trade</a>
+      {% endif %}
+      {% if viewer_owns %}
+      <form method="post" action="/teams/{{ team.id }}/release">
+        <button type="submit" class="button">Release Team</button>
+      </form>
+      {% endif %}
+    </section>
+    {% if viewer_owns %}
+    <section class="panel">
+      <h2>Lineup</h2>
+      <p class="muted">Pick exactly 5 starters and set minute targets (0-48). Targets are scaled so the rotation fills 240 minutes.</p>
+      <form method="post" action="/teams/{{ team.id }}/lineup">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Starter</th><th>Player</th><th>Pos</th><th>OVR</th><th>Minutes</th></tr></thead>
+            <tbody>
+            {% for player in lineup %}
+              <tr>
+                <td><input type="checkbox" name="starter" value="{{ player.id }}" {% if player.starter %}checked{% endif %}></td>
+                <td><a href="/players/{{ player.id }}">{{ player.name }}</a></td>
+                <td>{{ player.position }}</td>
+                <td>{{ player.overall }}</td>
+                <td><input type="number" name="min_{{ player.id }}" value="{{ player.minutes }}" min="0" max="48" inputmode="numeric"></td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <button type="submit" class="button">Save Lineup</button>
+      </form>
+    </section>
+    {% endif %}
     <section class="panel">
       <h2>Roster Season Stats</h2>
       <div class="table-wrap">

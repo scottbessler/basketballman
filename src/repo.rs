@@ -62,6 +62,10 @@ impl LeagueRepository {
 
     pub fn reset(&self, league: &mut League) -> Result<(), RepoError> {
         league.results.clear();
+        league.playoffs = None;
+        league
+            .schedule
+            .retain(|game| game.date_index <= crate::playoffs::REGULAR_SEASON_DATES);
         for game in &mut league.schedule {
             game.status = GameStatus::Scheduled;
         }
@@ -81,7 +85,12 @@ impl LeagueRepository {
 
 fn league_shape_valid(league: &League) -> bool {
     league.teams.len() == TEAM_SEEDS.len()
-        && league.schedule.len() == 1216
+        && league
+            .schedule
+            .iter()
+            .filter(|game| game.date_index <= crate::playoffs::REGULAR_SEASON_DATES)
+            .count()
+            == 1216
         && league
             .schedule
             .iter()

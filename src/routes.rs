@@ -1,32 +1,66 @@
+use crate::auth;
 use crate::models::{
     Conference, Game, GameResult, GameStatus, League, Player, PlayerGameStats, PlayerSeasonStats,
-    Position, Team,
+    Position, Team, TradeStatus,
+};
+use crate::playoffs::{
+    REGULAR_SEASON_DATES, advance_playoff_day, champion, regular_season_complete, start_playoffs,
 };
 use crate::repo::LeagueRepository;
+use crate::session::{AuthUser, MaybeUser};
 use crate::sim::{SimConfig, player_overall, simulate_game, team_rating};
 use crate::stats::{next_unplayed_date_indices, player_season_stats, standings};
+use crate::trades;
+use crate::users::UserStore;
 use askama::Template;
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Form, FromRef, Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use axum_extra::extract::cookie::Key;
+use serde::Deserialize;
 use std::cmp::Reverse;
 use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
+use uuid::Uuid;
+use webauthn_rs::prelude::Webauthn;
 
 #[derive(Clone)]
 pub struct AppState {
     pub repo: LeagueRepository,
     pub league: Arc<Mutex<League>>,
+    pub users: Arc<UserStore>,
+    pub webauthn: Arc<Webauthn>,
+    pub key: Key,
+    /// When set, auth skips the WebAuthn ceremony and trusts the username
+    /// alone. Dev-only escape hatch — browsers dislike passkeys on localhost.
+    pub passkey_disabled: bool,
+}
+
+/// Lets the signed-cookie extractors pull the signing key out of `AppState`.
+impl FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.key.clone()
+    }
 }
 
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/healthcheck", get(healthcheck))
+        .route("/login", get(login_page))
+        .route("/auth/register/begin", post(auth::register_begin))
+        .route("/auth/register/finish", post(auth::register_finish))
+        .route("/auth/login/begin", post(auth::login_begin))
+        .route("/auth/login/finish", post(auth::login_finish))
+        .route("/auth/logout", post(auth::logout))
+        .route("/me", get(my_team))
         .route("/standings", get(standings_page))
         .route("/teams", get(teams))
         .route("/teams/{id}", get(team_detail))
+        .route("/teams/{id}/claim", post(claim_team))
+        .route("/teams/{id}/release", post(release_team))
+        .route("/teams/{id}/lineup", post(set_lineup))
         .route("/players/{id}", get(player_detail))
         .route("/schedule", get(schedule))
         .route("/games/{id}", get(game_detail))
@@ -34,6 +68,14 @@ pub fn app(state: AppState) -> Router {
         .route("/sim/day", post(sim_day))
         .route("/sim/week", post(sim_week))
         .route("/sim/month", post(sim_month))
+        .route("/trades", get(trades_page).post(create_trade))
+        .route("/trades/new", get(trade_new_page))
+        .route("/trades/{id}/accept", post(accept_trade_route))
+        .route("/trades/{id}/reject", post(reject_trade_route))
+        .route("/trades/{id}/withdraw", post(withdraw_trade_route))
+        .route("/playoffs", get(playoffs_page))
+        .route("/playoffs/start", post(start_playoffs_route))
+        .route("/playoffs/sim", post(sim_playoff_day))
         .route("/league/reset", post(reset_league))
         .route("/league/regen", post(regen_league))
         .nest_service("/static", ServeDir::new("static"))
@@ -59,12 +101,128 @@ async fn teams(State(state): State<AppState>) -> Response {
     render(TeamsTemplate::from_league(&league))
 }
 
-async fn team_detail(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+async fn team_detail(
+    State(state): State<AppState>,
+    MaybeUser(viewer): MaybeUser,
+    Path(id): Path<String>,
+) -> Response {
     let league = state.league.lock().expect("league lock").clone();
-    match TeamTemplate::from_league(&league, &id) {
+    match TeamTemplate::from_league(&league, &state.users, viewer, &id) {
         Some(template) => render(template),
         None => (axum::http::StatusCode::NOT_FOUND, "team not found").into_response(),
     }
+}
+
+async fn login_page() -> Response {
+    render(LoginTemplate {})
+}
+
+/// Landing spot for the signed-in owner: their team page, or the team list so
+/// they can claim one.
+async fn my_team(State(state): State<AppState>, AuthUser(user_id): AuthUser) -> Redirect {
+    let league = state.league.lock().expect("league lock");
+    match owned_team_id(&league, user_id) {
+        Some(team_id) => Redirect::to(&format!("/teams/{team_id}")),
+        None => Redirect::to("/teams"),
+    }
+}
+
+async fn claim_team(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    if owned_team_id(&league, user_id).is_some() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "you already manage a team",
+        )
+            .into_response();
+    }
+    let Some(team) = league.teams.iter_mut().find(|team| team.id == id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "team not found").into_response();
+    };
+    if team.owner_user_id.is_some() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "that team already has an owner",
+        )
+            .into_response();
+    }
+    team.owner_user_id = Some(user_id);
+    persist_and_redirect(&state, &league, &format!("/teams/{id}"))
+}
+
+async fn release_team(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let Some(team) = league.teams.iter_mut().find(|team| team.id == id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "team not found").into_response();
+    };
+    if team.owner_user_id != Some(user_id) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "you do not manage this team",
+        )
+            .into_response();
+    }
+    team.owner_user_id = None;
+    team.starters.clear();
+    team.minute_targets.clear();
+    persist_and_redirect(&state, &league, &format!("/teams/{id}"))
+}
+
+/// Save starters and minute targets. The form posts repeated `starter`
+/// checkboxes plus one `min_<player_id>` field per roster player.
+async fn set_lineup(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let Some(team) = league.teams.iter().find(|team| team.id == id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "team not found").into_response();
+    };
+    if team.owner_user_id != Some(user_id) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "you do not manage this team",
+        )
+            .into_response();
+    }
+    let roster = team.roster.clone();
+    let mut starters: Vec<String> = Vec::new();
+    let mut minute_targets = std::collections::BTreeMap::new();
+    for (name, value) in &fields {
+        if name == "starter" && roster.contains(value) && !starters.contains(value) {
+            starters.push(value.clone());
+        } else if let Some(player_id) = name.strip_prefix("min_")
+            && roster.iter().any(|id| id == player_id)
+            && let Ok(minutes) = value.trim().parse::<u16>()
+        {
+            minute_targets.insert(player_id.to_string(), minutes.min(48));
+        }
+    }
+    if starters.len() != 5 {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "pick exactly 5 starters",
+        )
+            .into_response();
+    }
+    let team = league
+        .teams
+        .iter_mut()
+        .find(|team| team.id == id)
+        .expect("team");
+    team.starters = starters;
+    team.minute_targets = minute_targets;
+    persist_and_redirect(&state, &league, &format!("/teams/{id}"))
 }
 
 async fn player_detail(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -170,6 +328,280 @@ fn simulate_next_dates(league: &mut League, date_count: usize) {
     for game_id in game_ids {
         simulate_game(league, &game_id, SimConfig::default());
     }
+    // Once the regular season is over, the sim buttons roll the playoffs
+    // forward one date per remaining day.
+    let mut remaining = date_count.saturating_sub(dates.len());
+    while remaining > 0 && advance_playoff_day(league, SimConfig::default()) {
+        remaining -= 1;
+    }
+}
+
+fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response {
+    if let Err(error) = state.repo.save(league) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("save failed: {error}"),
+        )
+            .into_response();
+    }
+    Redirect::to(to).into_response()
+}
+
+fn owned_team_id(league: &League, user_id: Uuid) -> Option<String> {
+    league
+        .teams
+        .iter()
+        .find(|team| team.owner_user_id == Some(user_id))
+        .map(|team| team.id.clone())
+}
+
+fn team_label(league: &League, team_id: &str) -> String {
+    league
+        .teams
+        .iter()
+        .find(|team| team.id == team_id)
+        .map(|team| format!("{} {}", team.city, team.name))
+        .unwrap_or_else(|| team_id.to_string())
+}
+
+fn player_names(league: &League, player_ids: &[String]) -> String {
+    player_ids
+        .iter()
+        .map(|player_id| {
+            league
+                .players
+                .iter()
+                .find(|player| &player.id == player_id)
+                .map(|player| player.name.clone())
+                .unwrap_or_else(|| player_id.clone())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[derive(Deserialize)]
+struct TradeNewQuery {
+    team: Option<String>,
+    counter_of: Option<String>,
+}
+
+async fn trades_page(State(state): State<AppState>, MaybeUser(viewer): MaybeUser) -> Response {
+    let league = state.league.lock().expect("league lock").clone();
+    render(TradesTemplate::from_league(&league, viewer))
+}
+
+async fn trade_new_page(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Query(query): Query<TradeNewQuery>,
+) -> Response {
+    let league = state.league.lock().expect("league lock").clone();
+    let Some(my_team_id) = owned_team_id(&league, user_id) else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "claim a team before proposing trades",
+        )
+            .into_response();
+    };
+    // Countering swaps the direction: the target becomes the original sender.
+    let (to_team_id, counter_of) = if let Some(counter_id) = query.counter_of {
+        let Some(original) = league.trades.iter().find(|trade| trade.id == counter_id) else {
+            return (axum::http::StatusCode::NOT_FOUND, "trade not found").into_response();
+        };
+        if original.to_team_id != my_team_id || original.status != TradeStatus::Pending {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "you can only counter pending offers sent to your team",
+            )
+                .into_response();
+        }
+        (original.from_team_id.clone(), Some(counter_id))
+    } else {
+        match query.team {
+            Some(team) => (team, None),
+            None => {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "pick a team to trade with",
+                )
+                    .into_response();
+            }
+        }
+    };
+    match TradeNewTemplate::from_league(&league, &my_team_id, &to_team_id, counter_of) {
+        Some(template) => render(template),
+        None => (axum::http::StatusCode::NOT_FOUND, "team not found").into_response(),
+    }
+}
+
+async fn create_trade(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let Some(from_team_id) = owned_team_id(&league, user_id) else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "claim a team before proposing trades",
+        )
+            .into_response();
+    };
+    let mut to_team_id = String::new();
+    let mut offered: Vec<String> = Vec::new();
+    let mut requested: Vec<String> = Vec::new();
+    let mut note = None;
+    let mut counter_of = None;
+    for (name, value) in &fields {
+        match name.as_str() {
+            "to_team" => to_team_id = value.clone(),
+            "offer" if !offered.contains(value) => offered.push(value.clone()),
+            "request" if !requested.contains(value) => requested.push(value.clone()),
+            "note" => note = trades::clean_note(value),
+            "counter_of" if !value.is_empty() => counter_of = Some(value.clone()),
+            _ => {}
+        }
+    }
+    if let Err(error) =
+        trades::validate_offer(&league, &from_team_id, &to_team_id, &offered, &requested)
+    {
+        return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+    }
+    // A counter closes out the offer it answers and carries its note there too.
+    if let Some(counter_id) = &counter_of {
+        let Some(original) = trades::trade_mut(&mut league, counter_id) else {
+            return (axum::http::StatusCode::NOT_FOUND, "trade not found").into_response();
+        };
+        if original.to_team_id != from_team_id || original.status != TradeStatus::Pending {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "you can only counter pending offers sent to your team",
+            )
+                .into_response();
+        }
+        original.status = TradeStatus::Countered;
+        original.response_note = note.clone();
+    }
+    let trade = crate::models::TradeOffer {
+        id: trades::next_trade_id(&league),
+        from_team_id,
+        to_team_id,
+        offered_player_ids: offered,
+        requested_player_ids: requested,
+        note,
+        status: TradeStatus::Pending,
+        response_note: None,
+        counter_of,
+    };
+    league.trades.push(trade);
+    persist_and_redirect(&state, &league, "/trades")
+}
+
+async fn accept_trade_route(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let Some(trade) = league.trades.iter().find(|trade| trade.id == id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "trade not found").into_response();
+    };
+    if owned_team_id(&league, user_id).as_deref() != Some(trade.to_team_id.as_str()) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "only the receiving owner can accept",
+        )
+            .into_response();
+    }
+    if let Err(error) = trades::accept_trade(&mut league, &id) {
+        return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+    }
+    persist_and_redirect(&state, &league, "/trades")
+}
+
+async fn reject_trade_route(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let my_team = owned_team_id(&league, user_id);
+    let note = fields
+        .iter()
+        .find(|(name, _)| name == "note")
+        .and_then(|(_, value)| trades::clean_note(value));
+    let Some(trade) = trades::trade_mut(&mut league, &id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "trade not found").into_response();
+    };
+    if my_team.as_deref() != Some(trade.to_team_id.as_str()) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "only the receiving owner can reject",
+        )
+            .into_response();
+    }
+    if trade.status != TradeStatus::Pending {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "trade is no longer pending",
+        )
+            .into_response();
+    }
+    trade.status = TradeStatus::Rejected;
+    trade.response_note = note;
+    persist_and_redirect(&state, &league, "/trades")
+}
+
+async fn withdraw_trade_route(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    let my_team = owned_team_id(&league, user_id);
+    let Some(trade) = trades::trade_mut(&mut league, &id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "trade not found").into_response();
+    };
+    if my_team.as_deref() != Some(trade.from_team_id.as_str()) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "only the offering owner can withdraw",
+        )
+            .into_response();
+    }
+    if trade.status != TradeStatus::Pending {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "trade is no longer pending",
+        )
+            .into_response();
+    }
+    trade.status = TradeStatus::Withdrawn;
+    persist_and_redirect(&state, &league, "/trades")
+}
+
+async fn playoffs_page(State(state): State<AppState>) -> Response {
+    let league = state.league.lock().expect("league lock").clone();
+    render(PlayoffsTemplate::from_league(&league))
+}
+
+async fn start_playoffs_route(State(state): State<AppState>) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    if !start_playoffs(&mut league) && league.playoffs.is_none() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "finish the regular season first",
+        )
+            .into_response();
+    }
+    persist_and_redirect(&state, &league, "/playoffs")
+}
+
+async fn sim_playoff_day(State(state): State<AppState>) -> Response {
+    let mut league = state.league.lock().expect("league lock");
+    advance_playoff_day(&mut league, SimConfig::default());
+    persist_and_redirect(&state, &league, "/playoffs")
 }
 
 fn render<T: Template>(template: T) -> Response {
@@ -257,11 +689,19 @@ impl StandingsTemplate {
             .map(|day| day.to_string())
             .unwrap_or_else(|| "-".to_string());
 
+        let regular_season: Vec<_> = league
+            .schedule
+            .iter()
+            .filter(|game| game.date_index <= REGULAR_SEASON_DATES)
+            .collect();
         Self {
             east,
             west,
-            played: league.results.len(),
-            games: league.schedule.len(),
+            played: regular_season
+                .iter()
+                .filter(|game| game.status == GameStatus::Played)
+                .count(),
+            games: regular_season.len(),
             next_day,
         }
     }
@@ -295,10 +735,31 @@ impl TeamsTemplate {
 struct TeamTemplate {
     team: TeamRow,
     players: Vec<PlayerRow>,
+    owned: bool,
+    owner_name: String,
+    signed_in: bool,
+    viewer_owns: bool,
+    can_claim: bool,
+    can_propose: bool,
+    lineup: Vec<LineupRow>,
+}
+
+struct LineupRow {
+    id: String,
+    name: String,
+    position: String,
+    overall: u8,
+    starter: bool,
+    minutes: String,
 }
 
 impl TeamTemplate {
-    fn from_league(league: &League, id: &str) -> Option<Self> {
+    fn from_league(
+        league: &League,
+        users: &UserStore,
+        viewer: Option<Uuid>,
+        id: &str,
+    ) -> Option<Self> {
         let team = league.teams.iter().find(|team| team.id == id)?;
         let season_stats = player_season_stats(league);
         let mut players: Vec<PlayerRow> = team
@@ -312,10 +773,290 @@ impl TeamTemplate {
                 .cmp(&a.points)
                 .then_with(|| b.overall.cmp(&a.overall))
         });
+        let owner_name = team
+            .owner_user_id
+            .and_then(|owner_id| users.get(owner_id))
+            .map(|user| user.display_name)
+            .unwrap_or_default();
+        let viewer_team = viewer.and_then(|user_id| owned_team_id(league, user_id));
+        let viewer_owns = viewer.is_some() && team.owner_user_id == viewer;
+        let mut lineup: Vec<LineupRow> = team
+            .roster
+            .iter()
+            .filter_map(|player_id| league.players.iter().find(|player| &player.id == player_id))
+            .map(|player| LineupRow {
+                id: player.id.clone(),
+                name: player.name.clone(),
+                position: position_name(player.position),
+                overall: player_overall(player) as u8,
+                starter: team.starters.contains(&player.id),
+                minutes: team
+                    .minute_targets
+                    .get(&player.id)
+                    .map(|minutes| minutes.to_string())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        lineup.sort_by(|a, b| b.overall.cmp(&a.overall).then_with(|| a.id.cmp(&b.id)));
         Some(Self {
             team: TeamRow::from_team(league, team),
             players,
+            owned: team.owner_user_id.is_some(),
+            owner_name,
+            signed_in: viewer.is_some(),
+            viewer_owns,
+            can_claim: viewer.is_some() && team.owner_user_id.is_none() && viewer_team.is_none(),
+            can_propose: team.owner_user_id.is_some() && !viewer_owns && viewer_team.is_some(),
+            lineup,
         })
+    }
+}
+
+#[derive(Template)]
+#[template(path = "login.html")]
+struct LoginTemplate {}
+
+#[derive(Template)]
+#[template(path = "trades.html")]
+struct TradesTemplate {
+    signed_in: bool,
+    has_team: bool,
+    my_team: String,
+    incoming: Vec<TradeRow>,
+    outgoing: Vec<TradeRow>,
+    history: Vec<TradeRow>,
+    partners: Vec<TradePartner>,
+}
+
+struct TradePartner {
+    id: String,
+    label: String,
+}
+
+struct TradeRow {
+    id: String,
+    from_team: String,
+    to_team: String,
+    offered: String,
+    requested: String,
+    note: String,
+    response_note: String,
+    status: String,
+}
+
+impl TradeRow {
+    fn from_trade(league: &League, trade: &crate::models::TradeOffer) -> Self {
+        Self {
+            id: trade.id.clone(),
+            from_team: team_label(league, &trade.from_team_id),
+            to_team: team_label(league, &trade.to_team_id),
+            offered: player_names(league, &trade.offered_player_ids),
+            requested: player_names(league, &trade.requested_player_ids),
+            note: trade.note.clone().unwrap_or_default(),
+            response_note: trade.response_note.clone().unwrap_or_default(),
+            status: trade.status.to_string(),
+        }
+    }
+}
+
+impl TradesTemplate {
+    fn from_league(league: &League, viewer: Option<Uuid>) -> Self {
+        let my_team_id = viewer.and_then(|user_id| owned_team_id(league, user_id));
+        let mut incoming = Vec::new();
+        let mut outgoing = Vec::new();
+        let mut history = Vec::new();
+        for trade in league.trades.iter().rev() {
+            let row = TradeRow::from_trade(league, trade);
+            let mine_in = my_team_id.as_deref() == Some(trade.to_team_id.as_str());
+            let mine_out = my_team_id.as_deref() == Some(trade.from_team_id.as_str());
+            if trade.status == TradeStatus::Pending && mine_in {
+                incoming.push(row);
+            } else if trade.status == TradeStatus::Pending && mine_out {
+                outgoing.push(row);
+            } else {
+                history.push(row);
+            }
+        }
+        let partners = league
+            .teams
+            .iter()
+            .filter(|team| {
+                team.owner_user_id.is_some() && Some(team.id.as_str()) != my_team_id.as_deref()
+            })
+            .map(|team| TradePartner {
+                id: team.id.clone(),
+                label: format!("{} {}", team.city, team.name),
+            })
+            .collect();
+        Self {
+            signed_in: viewer.is_some(),
+            has_team: my_team_id.is_some(),
+            my_team: my_team_id
+                .as_deref()
+                .map(|team_id| team_label(league, team_id))
+                .unwrap_or_default(),
+            incoming,
+            outgoing,
+            history,
+            partners,
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "trade_new.html")]
+struct TradeNewTemplate {
+    to_team_id: String,
+    from_team: String,
+    to_team: String,
+    counter_of: String,
+    my_players: Vec<TradePlayerRow>,
+    their_players: Vec<TradePlayerRow>,
+}
+
+struct TradePlayerRow {
+    id: String,
+    name: String,
+    position: String,
+    overall: u8,
+}
+
+impl TradeNewTemplate {
+    fn from_league(
+        league: &League,
+        from_team_id: &str,
+        to_team_id: &str,
+        counter_of: Option<String>,
+    ) -> Option<Self> {
+        let from = league.teams.iter().find(|team| team.id == from_team_id)?;
+        let to = league.teams.iter().find(|team| team.id == to_team_id)?;
+        let rows = |team: &Team| -> Vec<TradePlayerRow> {
+            let mut rows: Vec<TradePlayerRow> = team
+                .roster
+                .iter()
+                .filter_map(|player_id| {
+                    league.players.iter().find(|player| &player.id == player_id)
+                })
+                .map(|player| TradePlayerRow {
+                    id: player.id.clone(),
+                    name: player.name.clone(),
+                    position: position_name(player.position),
+                    overall: player_overall(player) as u8,
+                })
+                .collect();
+            rows.sort_by(|a, b| b.overall.cmp(&a.overall).then_with(|| a.id.cmp(&b.id)));
+            rows
+        };
+        Some(Self {
+            to_team_id: to.id.clone(),
+            from_team: format!("{} {}", from.city, from.name),
+            to_team: format!("{} {}", to.city, to.name),
+            counter_of: counter_of.unwrap_or_default(),
+            my_players: rows(from),
+            their_players: rows(to),
+        })
+    }
+}
+
+#[derive(Template)]
+#[template(path = "playoffs.html")]
+struct PlayoffsTemplate {
+    started: bool,
+    can_start: bool,
+    finished: bool,
+    champion: String,
+    rounds: Vec<PlayoffRoundView>,
+}
+
+struct PlayoffRoundView {
+    name: String,
+    series: Vec<PlayoffSeriesView>,
+}
+
+struct PlayoffSeriesView {
+    label: String,
+    high_team: String,
+    low_team: String,
+    high_wins: u8,
+    low_wins: u8,
+    finished: bool,
+    winner: String,
+    games: Vec<PlayoffGameView>,
+}
+
+struct PlayoffGameView {
+    id: String,
+    number: usize,
+    score: String,
+}
+
+impl PlayoffsTemplate {
+    fn from_league(league: &League) -> Self {
+        let champion_label = champion(league)
+            .map(|team_id| team_label(league, &team_id))
+            .unwrap_or_default();
+        let rounds = league
+            .playoffs
+            .as_ref()
+            .map(|playoffs| {
+                playoffs
+                    .rounds
+                    .iter()
+                    .map(|round| PlayoffRoundView {
+                        name: round.name.clone(),
+                        series: round
+                            .series
+                            .iter()
+                            .map(|series| PlayoffSeriesView {
+                                label: match series.conference {
+                                    Some(conference) => format!(
+                                        "{} {} vs {}",
+                                        conference, series.high_seed, series.low_seed
+                                    ),
+                                    None => "Finals".to_string(),
+                                },
+                                high_team: team_label(league, &series.high_team_id),
+                                low_team: team_label(league, &series.low_team_id),
+                                high_wins: series.high_wins,
+                                low_wins: series.low_wins,
+                                finished: series.finished(),
+                                winner: series
+                                    .winner_team_id
+                                    .as_deref()
+                                    .map(|team_id| team_label(league, team_id))
+                                    .unwrap_or_default(),
+                                games: series
+                                    .game_ids
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, game_id)| PlayoffGameView {
+                                        id: game_id.clone(),
+                                        number: index + 1,
+                                        score: league
+                                            .results
+                                            .get(game_id)
+                                            .map(|result| {
+                                                format!(
+                                                    "{}-{}",
+                                                    result.away_score, result.home_score
+                                                )
+                                            })
+                                            .unwrap_or_else(|| "-".to_string()),
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            started: league.playoffs.is_some(),
+            can_start: league.playoffs.is_none() && regular_season_complete(league),
+            finished: !champion_label.is_empty(),
+            champion: champion_label,
+            rounds,
+        }
     }
 }
 

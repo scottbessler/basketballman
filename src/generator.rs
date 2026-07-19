@@ -13,6 +13,9 @@ pub fn generate_league(seed: u64) -> League {
     for (team_index, team_seed) in TEAM_SEEDS.iter().enumerate() {
         let team_id = format!("t{:02}", team_index + 1);
         let mut roster = Vec::with_capacity(ROSTER_SIZE);
+        // Two dice sum for a bell curve of team quality; the wide per-team
+        // swing spreads team overall ratings across roughly 64-80.
+        let team_talent = 64 + rng.gen_range(-13..=13i16) + rng.gen_range(-13..=13i16);
 
         for roster_index in 0..ROSTER_SIZE {
             let player_id = format!("p{:03}", players.len() + 1);
@@ -24,7 +27,7 @@ pub fn generate_league(seed: u64) -> League {
                 3 => Position::PF,
                 _ => Position::C,
             };
-            let talent = rng.gen_range(42..=92i16);
+            let talent = (team_talent + rng.gen_range(-10..=10i16)).clamp(35, 120);
             let flavor = position_flavor(position);
             players.push(Player {
                 id: player_id,
@@ -57,6 +60,9 @@ pub fn generate_league(seed: u64) -> League {
             conference: team_seed.conference,
             division: team_seed.division,
             roster,
+            owner_user_id: None,
+            starters: Vec::new(),
+            minute_targets: BTreeMap::new(),
         });
     }
 
@@ -71,6 +77,8 @@ pub fn generate_league(seed: u64) -> League {
         players,
         schedule,
         results: BTreeMap::new(),
+        trades: Vec::new(),
+        playoffs: None,
     }
 }
 
