@@ -8,6 +8,8 @@ dockerfile = "Dockerfile"
 [env]
 DATA_PATH = "/data"
 PORT = "8080"
+RP_ID = "basketballman.fly.dev"
+RP_ORIGIN = "https://basketballman.fly.dev"
 
 [processes]
 app = "/app/basketballman"
