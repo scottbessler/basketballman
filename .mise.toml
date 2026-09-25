@@ -1,0 +1,24 @@
+[tools]
+rust = { version = "1.95.0", components = "rustfmt,clippy" }
+
+[tasks.setup]
+description = "Prepare a dev environment: git hooks, crates, warm build"
+run = "./scripts/setup.sh"
+
+[tasks.dev]
+description = "Run the server with file-watch restart"
+run = "./dev.sh"
+
+[tasks.lint]
+description = "Rust format check + clippy"
+run = ["cargo fmt --check", "cargo clippy --all-targets"]
+
+[tasks.test]
+run = "cargo test --locked"
+
+[tasks.check]
+description = "Everything CI runs"
+run = ["cargo fmt --check", "cargo check --locked", "cargo check --release --locked", "cargo clippy --locked --all-targets --all-features", "cargo test --locked"]
+
+[tasks.fix]
+run = ["cargo fmt", "cargo clippy --fix --allow-dirty --all-targets"]

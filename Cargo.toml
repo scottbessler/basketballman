@@ -20,3 +20,11 @@ webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+rust_2018_idioms = { level = "deny", priority = -1 }
+unsafe_code = "forbid"
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"

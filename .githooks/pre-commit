@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+echo "[pre-commit] cargo fmt --check"
+cargo fmt --check
+echo "[pre-commit] cargo clippy"
+cargo clippy --all-targets
+echo "[pre-commit] ok"
