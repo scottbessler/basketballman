@@ -504,9 +504,33 @@ fn team_overall_ratings_stay_in_a_believable_band() {
         assert!((58..=68).contains(&min), "seed {seed}: min rating {min}");
         assert!((66..=78).contains(&max), "seed {seed}: max rating {max}");
         assert!(
-            max - min >= 3,
+            max - min >= 2,
             "seed {seed}: spread {} too small",
             max - min
+        );
+
+        // What decides games is the top of the rotation: those eight must
+        // differ clearly between the best and worst teams.
+        let rotation: Vec<f64> = league
+            .teams
+            .iter()
+            .map(|team| {
+                let mut overalls: Vec<u16> = team
+                    .roster
+                    .iter()
+                    .filter_map(|id| league.players.iter().find(|p| &p.id == id))
+                    .map(player_overall)
+                    .collect();
+                overalls.sort_unstable_by(|a, b| b.cmp(a));
+                overalls.iter().take(8).map(|o| *o as f64).sum::<f64>() / 8.0
+            })
+            .collect();
+        let best = rotation.iter().cloned().fold(0.0, f64::max);
+        let worst = rotation.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(
+            best - worst >= 6.0,
+            "seed {seed}: top-8 spread {:.1}",
+            best - worst
         );
     }
 }
