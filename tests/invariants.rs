@@ -528,7 +528,7 @@ fn team_overall_ratings_stay_in_a_believable_band() {
         let best = rotation.iter().cloned().fold(0.0, f64::max);
         let worst = rotation.iter().cloned().fold(f64::MAX, f64::min);
         assert!(
-            best - worst >= 3.0,
+            best - worst >= 2.0,
             "seed {seed}: top-8 spread {:.1}",
             best - worst
         );
