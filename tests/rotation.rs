@@ -262,26 +262,33 @@ fn caution_slider_changes_foul_trouble_sits() {
 }
 
 #[test]
-fn low_fatigue_tolerance_subs_more_often() {
-    let subs = |tolerance: u8| -> usize {
+fn fatigue_tolerance_keeps_starters_on_the_floor_longer() {
+    let top_five_minutes = |tolerance: u8| -> f64 {
         let mut league = generate_league(7);
         home_team_mut(&mut league).coach.fatigue_tolerance = tolerance;
         let home_id = league.schedule[0].home_team_id.clone();
-        run_seeds(&league, 0..30)
+        let top: Vec<String> = ranked(&league, &home_id).into_iter().take(5).collect();
+        let results = run_seeds(&league, 0..40);
+        results
             .iter()
             .map(|r| {
-                r.play_by_play
+                r.player_stats
                     .as_ref()
                     .unwrap()
                     .iter()
-                    .filter(|e| e.team_id == home_id && e.description.starts_with("Substitution"))
-                    .count()
+                    .filter(|l| top.contains(&l.player_id))
+                    .map(|l| l.minutes as f64)
+                    .sum::<f64>()
             })
-            .sum()
+            .sum::<f64>()
+            / results.len() as f64
     };
-    let twitchy = subs(0);
-    let grinder = subs(100);
-    assert!(twitchy > grinder, "{twitchy} subs vs {grinder}");
+    let twitchy = top_five_minutes(0);
+    let grinder = top_five_minutes(100);
+    assert!(
+        grinder > twitchy + 10.0,
+        "starters play {grinder:.0} vs {twitchy:.0} minutes"
+    );
 }
 
 #[test]

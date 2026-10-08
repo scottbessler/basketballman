@@ -19,6 +19,8 @@ pub enum TradeError {
     SameTeam,
     #[error("both teams must be managed by a human owner")]
     Unowned,
+    #[error("{0} would exceed the salary cap")]
+    OverCap(String),
 }
 
 pub fn next_trade_id(league: &League) -> String {
@@ -47,6 +49,16 @@ pub fn validate_offer(
         || !requested.iter().all(|id| to.roster.contains(id))
     {
         return Err(TradeError::WrongTeam);
+    }
+    for (team_id, incoming, outgoing) in [
+        (from_team_id, requested, offered),
+        (to_team_id, offered, requested),
+    ] {
+        if !crate::contracts::trade_cap_ok(league, team_id, incoming, outgoing) {
+            return Err(TradeError::OverCap(crate::contracts::team_label(
+                league, team_id,
+            )));
+        }
     }
     Ok(())
 }

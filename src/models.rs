@@ -21,6 +21,89 @@ pub struct League {
     pub trades: Vec<TradeOffer>,
     #[serde(default)]
     pub playoffs: Option<Playoffs>,
+    #[serde(default)]
+    pub phase: Phase,
+    #[serde(default)]
+    pub draft: Option<Draft>,
+    /// Days of free agency elapsed this offseason (asking prices decay).
+    #[serde(default)]
+    pub fa_day: u16,
+    #[serde(default)]
+    pub history: Vec<SeasonSummary>,
+    /// Transaction log shown on the offseason page (newest last).
+    #[serde(default)]
+    pub transactions: Vec<String>,
+}
+
+/// Where the league is in its yearly cycle.
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum Phase {
+    /// Fantasy draft building the initial rosters.
+    FantasyDraft,
+    #[default]
+    RegularSeason,
+    /// Rookie draft after the playoffs.
+    Draft,
+    /// Owners may re-sign expiring players.
+    Resign,
+    FreeAgency,
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::FantasyDraft => "Fantasy Draft",
+            Self::RegularSeason => "Season",
+            Self::Draft => "Draft",
+            Self::Resign => "Re-signing",
+            Self::FreeAgency => "Free Agency",
+        };
+        write!(f, "{name}")
+    }
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum DraftKind {
+    Fantasy,
+    Rookie,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Draft {
+    pub kind: DraftKind,
+    pub season: u16,
+    /// Team on the clock for every pick, in order (rounds × teams).
+    pub order: Vec<TeamId>,
+    pub picks: Vec<DraftPick>,
+}
+
+impl Draft {
+    pub fn on_the_clock(&self) -> Option<&TeamId> {
+        self.order.get(self.picks.len())
+    }
+
+    pub fn complete(&self) -> bool {
+        self.picks.len() >= self.order.len()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DraftPick {
+    /// 1-based overall pick number.
+    pub number: u16,
+    pub team_id: TeamId,
+    pub player_id: PlayerId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SeasonSummary {
+    pub season: u16,
+    pub champion_team_id: Option<TeamId>,
+    pub champion_name: String,
+    /// Best regular-season record: (team label, wins, losses).
+    pub best_record: String,
+    /// Leading scorer label, e.g. "Name (PPG)".
+    pub scoring_leader: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -248,7 +331,57 @@ pub struct Player {
     pub age: u8,
     pub position: Position,
     pub ratings: Ratings,
+    /// Empty when the player is not on a roster (free agent, prospect, retired).
     pub team_id: TeamId,
+    #[serde(default)]
+    pub status: PlayerStatus,
+    /// Projected peak overall. 0 on old saves (treated as current overall).
+    #[serde(default)]
+    pub potential: u8,
+    #[serde(default)]
+    pub contract: Option<Contract>,
+    /// Scouting error applied to prospects' displayed overall/potential.
+    #[serde(default)]
+    pub scouting_fudge: i8,
+    /// Draft class year for prospects and drafted players.
+    #[serde(default)]
+    pub draft_year: Option<u16>,
+    #[serde(default)]
+    pub history: Vec<SeasonLine>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PlayerStatus {
+    /// On a team's roster.
+    #[default]
+    Active,
+    FreeAgent,
+    /// Draft-eligible, not yet drafted.
+    Prospect,
+    Retired,
+}
+
+/// Salary in thousands of dollars per year.
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Contract {
+    pub salary: u32,
+    /// Seasons remaining including the current one. 0 = expiring (re-sign
+    /// window), contract ends when free agency opens.
+    pub years_left: u8,
+}
+
+/// One archived season for the player page.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SeasonLine {
+    pub season: u16,
+    pub age: u8,
+    pub team: String,
+    pub overall: u16,
+    pub games: u16,
+    /// Per-game averages x10 (e.g. 254 = 25.4).
+    pub ppg: u16,
+    pub rpg: u16,
+    pub apg: u16,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

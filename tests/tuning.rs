@@ -281,3 +281,170 @@ fn print_foul_outs() {
         }
     }
 }
+
+#[test]
+#[ignore]
+fn print_league_economy() {
+    use basketballman::contracts::payroll;
+    use basketballman::models::PlayerStatus;
+    use basketballman::sim::{player_overall, team_rating};
+    for seed in [7u64, 42] {
+        let league = generate_league(seed);
+        let mut ovrs: Vec<u16> = league
+            .players
+            .iter()
+            .filter(|p| p.status == PlayerStatus::Active)
+            .map(player_overall)
+            .collect();
+        ovrs.sort_unstable_by(|a, b| b.cmp(a));
+        let pick = |n: usize| ovrs[n.min(ovrs.len() - 1)];
+        println!(
+            "seed {seed}: rostered {} top1 {} top10 {} top30 {} top100 {} top200 {} median {} worst {}",
+            ovrs.len(),
+            pick(0),
+            pick(9),
+            pick(29),
+            pick(99),
+            pick(199),
+            pick(ovrs.len() / 2),
+            pick(ovrs.len() - 1)
+        );
+        let mut pays: Vec<u32> = league
+            .teams
+            .iter()
+            .map(|t| payroll(&league, &t.id))
+            .collect();
+        pays.sort_unstable();
+        let ratings: Vec<i16> = league
+            .teams
+            .iter()
+            .map(|t| team_rating(&league, t))
+            .collect();
+        println!(
+            "  payroll min {} med {} max {} (cap 150000); team rating min {} max {}; roster sizes {:?}",
+            pays[0],
+            pays[16],
+            pays[31],
+            ratings.iter().min().unwrap(),
+            ratings.iter().max().unwrap(),
+            league
+                .teams
+                .iter()
+                .map(|t| t.roster.len())
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        let mut sal: Vec<u32> = league
+            .players
+            .iter()
+            .filter(|p| p.status == PlayerStatus::Active)
+            .filter_map(|p| p.contract.map(|c| c.salary))
+            .collect();
+        sal.sort_unstable_by(|a, b| b.cmp(a));
+        println!(
+            "  salaries top {:?} p50 {} min {}",
+            &sal[..5],
+            sal[sal.len() / 2],
+            sal[sal.len() - 1]
+        );
+        let ages: Vec<u8> = league
+            .players
+            .iter()
+            .filter(|p| p.status == PlayerStatus::Active)
+            .map(|p| p.age)
+            .collect();
+        println!(
+            "  mean age {:.1}",
+            ages.iter().map(|a| *a as f64).sum::<f64>() / ages.len() as f64
+        );
+        let fa = league
+            .players
+            .iter()
+            .filter(|p| p.status == PlayerStatus::FreeAgent)
+            .count();
+        let pr = league
+            .players
+            .iter()
+            .filter(|p| p.status == PlayerStatus::Prospect)
+            .count();
+        println!("  free agents {fa} prospects {pr}");
+    }
+}
+
+#[test]
+#[ignore]
+fn print_win_pct_spread() {
+    use basketballman::stats::standings;
+    for seed in [7u64, 42, 99] {
+        let mut league = generate_league(seed);
+        let ids: Vec<String> = league.schedule.iter().map(|g| g.id.clone()).collect();
+        for id in ids {
+            simulate_game(&mut league, &id, SimConfig::default());
+        }
+        let mut wins: Vec<u16> = standings(&league).values().map(|r| r.wins).collect();
+        wins.sort_unstable();
+        println!(
+            "seed {seed}: wins (of 76) lowest {:?} highest {:?} sd {:.1}",
+            &wins[..3],
+            &wins[29..],
+            {
+                let m = wins.iter().map(|w| *w as f64).sum::<f64>() / 32.0;
+                (wins.iter().map(|w| (*w as f64 - m).powi(2)).sum::<f64>() / 32.0).sqrt()
+            }
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn print_tolerance_effect() {
+    use basketballman::sim::{PossessionEngine, player_overall, simulation_input};
+    for tol in [0u8, 50, 100] {
+        let mut league = generate_league(7);
+        let game = league.schedule[0].clone();
+        let home = game.home_team_id.clone();
+        league
+            .teams
+            .iter_mut()
+            .find(|t| t.id == home)
+            .unwrap()
+            .coach
+            .fatigue_tolerance = tol;
+        let mut roster: Vec<_> = league
+            .teams
+            .iter()
+            .find(|t| t.id == home)
+            .unwrap()
+            .roster
+            .iter()
+            .map(|id| league.players.iter().find(|p| &p.id == id).unwrap().clone())
+            .collect();
+        roster.sort_by_key(|p| std::cmp::Reverse(player_overall(p)));
+        let top: Vec<String> = roster.iter().take(5).map(|p| p.id.clone()).collect();
+        let (mut mins, mut subs) = (0u32, 0usize);
+        for seed in 0..40 {
+            let mut input = simulation_input(&league, &game, SimConfig::default()).unwrap();
+            input.seed = seed;
+            let r = PossessionEngine.simulate(&input);
+            mins += r
+                .player_stats
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|l| top.contains(&l.player_id))
+                .map(|l| l.minutes as u32)
+                .sum::<u32>();
+            subs += r
+                .play_by_play
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|e| e.team_id == home && e.description.starts_with("Substitution"))
+                .count();
+        }
+        println!(
+            "tol {tol}: top5 minutes/game {:.1} subs/game {:.1}",
+            mins as f64 / 40.0,
+            subs as f64 / 40.0
+        );
+    }
+}

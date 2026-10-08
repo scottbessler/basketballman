@@ -125,13 +125,13 @@ T23|x|personal fouls + foul-out|C22
 T24|x|team strategy sliders offense/defense in sim|C23
 T25|x|coach: auto/minutes/chart substitution engine + coach sliders + auto chart builder|C19,C20,C22
 T26|x|lineup editor page: depth drag/drop, paint-drag chart, sliders; mobile/touch|C24
-T27|.|NBA-shaped player pool generator (tiers, archetypes, ages, potential)|C30
-T28|.|contracts + hard cap + payroll UI; trades obey cap|C26
-T29|.|free agency: pool, sign, waive, AI signings, roster limits|C27
-T30|.|age-based progression + retirement + player history|C25
-T31|.|prospect classes + scouting fuzz + lottery + rookie draft|C28
-T32|.|offseason phase flow + season rollover|C29
-T33|.|new-league flow w/ fantasy draft (cap-aware)|C30
+T27|x|NBA-shaped player pool generator (tiers, archetypes, ages, potential)|C30
+T28|~|contracts + hard cap + payroll UI; trades obey cap|C26
+T29|~|free agency: pool, sign, waive, AI signings, roster limits|C27
+T30|x|age-based progression + retirement + player history|C25
+T31|~|prospect classes + scouting fuzz + lottery + rookie draft|C28
+T32|~|offseason phase flow + season rollover|C29
+T33|~|new-league flow w/ fantasy draft (cap-aware)|C30
 T34|.|tests + docs for all of the above|V26..
 
 §B

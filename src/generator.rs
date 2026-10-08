@@ -1,66 +1,38 @@
-use crate::config::{DEFAULT_SEASON, FIRST_NAMES, LAST_NAMES, ROSTER_SIZE, TEAM_SEEDS};
-use crate::models::{League, Player, Position, Ratings, Team};
+use crate::config::{DEFAULT_SEASON, FANTASY_ROUNDS, PROSPECT_CLASS_SIZE, ROSTER_MAX, TEAM_SEEDS};
+use crate::draft::{run_all, start_fantasy_draft};
+use crate::models::{League, Phase, Team};
+use crate::pool::{generate_pool, generate_prospects};
 use crate::schedule::generate_schedule;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+/// How a new league's rosters come about.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum StartMode {
+    /// The AI runs a fantasy draft instantly.
+    Quick,
+    /// Owners (and the AI for unclaimed teams) draft the initial rosters.
+    Fantasy,
+}
+
+/// A ready-to-play league: NBA-shaped players drafted onto 32 teams.
 pub fn generate_league(seed: u64) -> League {
+    generate_league_with(seed, StartMode::Quick)
+}
+
+pub fn generate_league_with(seed: u64, mode: StartMode) -> League {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let mut teams = Vec::with_capacity(TEAM_SEEDS.len());
-    let mut players = Vec::with_capacity(TEAM_SEEDS.len() * ROSTER_SIZE);
-
-    for (team_index, team_seed) in TEAM_SEEDS.iter().enumerate() {
-        let team_id = format!("t{:02}", team_index + 1);
-        let mut roster = Vec::with_capacity(ROSTER_SIZE);
-        // Two dice sum for a bell curve of team quality; the wide per-team
-        // swing spreads team overall ratings across roughly 64-80.
-        let team_talent = 64 + rng.gen_range(-13..=13i16) + rng.gen_range(-13..=13i16);
-
-        for roster_index in 0..ROSTER_SIZE {
-            let player_id = format!("p{:03}", players.len() + 1);
-            roster.push(player_id.clone());
-            let position = match roster_index % 5 {
-                0 => Position::PG,
-                1 => Position::SG,
-                2 => Position::SF,
-                3 => Position::PF,
-                _ => Position::C,
-            };
-            let talent = (team_talent + rng.gen_range(-10..=10i16)).clamp(35, 120);
-            let flavor = position_flavor(position);
-            players.push(Player {
-                id: player_id,
-                name: random_name(&mut rng),
-                age: rng.gen_range(19..=35),
-                position,
-                ratings: Ratings {
-                    two_point_pct: percentage(talent, flavor[0], 42, 62, &mut rng),
-                    three_point_pct: percentage(talent, flavor[1], 28, 43, &mut rng),
-                    ft_pct: percentage(talent, flavor[2], 55, 95, &mut rng),
-                    inside_scoring: skill(talent, flavor[3], &mut rng),
-                    three_tendency: skill(talent, flavor[4], &mut rng),
-                    passing: skill(talent, flavor[5], &mut rng),
-                    ball_handling: skill(talent, flavor[6], &mut rng),
-                    perimeter_defense: skill(talent, flavor[7], &mut rng),
-                    interior_defense: skill(talent, flavor[8], &mut rng),
-                    steal: skill(talent, flavor[9], &mut rng),
-                    block: skill(talent, flavor[10], &mut rng),
-                    offensive_rebounding: skill(talent, flavor[11], &mut rng),
-                    defensive_rebounding: skill(talent, flavor[12], &mut rng),
-                    endurance: endurance(flavor[13], &mut rng),
-                },
-                team_id: team_id.clone(),
-            });
-        }
-
-        teams.push(Team {
-            id: team_id,
+    let teams: Vec<Team> = TEAM_SEEDS
+        .iter()
+        .enumerate()
+        .map(|(index, team_seed)| Team {
+            id: format!("t{:02}", index + 1),
             city: team_seed.city.to_string(),
             name: team_seed.name.to_string(),
             conference: team_seed.conference,
             division: team_seed.division,
-            roster,
+            roster: Vec::new(),
             owner_user_id: None,
             starters: Vec::new(),
             minute_targets: BTreeMap::new(),
@@ -69,12 +41,23 @@ pub fn generate_league(seed: u64) -> League {
             chart: Vec::new(),
             strategy: Default::default(),
             coach: Default::default(),
-        });
-    }
+        })
+        .collect();
+
+    let mut used_names = BTreeSet::new();
+    let pool_size = TEAM_SEEDS.len() * FANTASY_ROUNDS + 60;
+    let mut players = generate_pool(&mut rng, pool_size, 1, &mut used_names);
+    let prospects = generate_prospects(
+        &mut rng,
+        PROSPECT_CLASS_SIZE,
+        players.len() + 1,
+        DEFAULT_SEASON,
+        &mut used_names,
+    );
+    players.extend(prospects);
 
     let schedule = generate_schedule(DEFAULT_SEASON, &teams);
-
-    League {
+    let mut league = League {
         id: format!("league-{seed}"),
         name: "Basketballman Association".to_string(),
         seed,
@@ -85,34 +68,18 @@ pub fn generate_league(seed: u64) -> League {
         results: BTreeMap::new(),
         trades: Vec::new(),
         playoffs: None,
+        phase: Phase::RegularSeason,
+        draft: None,
+        fa_day: 0,
+        history: Vec::new(),
+        transactions: Vec::new(),
+    };
+    start_fantasy_draft(&mut league);
+    if mode == StartMode::Quick {
+        run_all(&mut league);
+        league.draft = None;
+        league.transactions.clear();
     }
-}
-
-fn position_flavor(position: Position) -> [i16; 14] {
-    match position {
-        Position::C => [55, 30, 66, 82, 22, 42, 38, 34, 88, 30, 92, 88, 92, 54],
-        Position::PF => [54, 33, 70, 70, 34, 52, 48, 48, 72, 42, 72, 78, 82, 58],
-        Position::SF => [53, 35, 76, 58, 50, 62, 60, 62, 58, 56, 48, 58, 64, 62],
-        Position::SG => [52, 38, 82, 44, 68, 52, 70, 68, 38, 68, 28, 38, 46, 64],
-        Position::PG => [50, 37, 84, 38, 74, 84, 86, 78, 28, 78, 22, 25, 35, 66],
-    }
-}
-
-fn skill(talent: i16, positional: i16, rng: &mut ChaCha8Rng) -> u8 {
-    (positional + (talent - 50) / 2 + rng.gen_range(-12..=12)).clamp(0, 99) as u8
-}
-
-/// Stamina is mostly athletic/genetic, so it does not track overall talent.
-fn endurance(positional: i16, rng: &mut ChaCha8Rng) -> u8 {
-    (positional + rng.gen_range(-14..=14)).clamp(25, 95) as u8
-}
-
-fn percentage(talent: i16, positional: i16, min: i16, max: i16, rng: &mut ChaCha8Rng) -> u8 {
-    (positional + (talent - 50) / 3 + rng.gen_range(-3..=3)).clamp(min, max) as u8
-}
-
-fn random_name(rng: &mut ChaCha8Rng) -> String {
-    let first = FIRST_NAMES[rng.gen_range(0..FIRST_NAMES.len())];
-    let last = LAST_NAMES[rng.gen_range(0..LAST_NAMES.len())];
-    format!("{first} {last}")
+    debug_assert!(league.teams.iter().all(|t| t.roster.len() <= ROSTER_MAX));
+    league
 }
