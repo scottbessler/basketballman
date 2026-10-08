@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod coach;
 pub mod config;
 pub mod generator;
 pub mod models;

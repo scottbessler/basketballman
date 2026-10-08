@@ -39,6 +39,142 @@ pub struct Team {
     /// Per-player minute targets (0-48) that steer the rotation.
     #[serde(default)]
     pub minute_targets: BTreeMap<PlayerId, u16>,
+    /// Explicit lineup mode; `None` on old saves (see [`Team::mode`]).
+    #[serde(default)]
+    pub lineup_mode: Option<LineupMode>,
+    /// Bench priority order (best first) after the starters; used by the
+    /// lineup editor and as the tie-break when the coach needs a body.
+    #[serde(default)]
+    pub bench_order: Vec<PlayerId>,
+    /// `Chart` mode: twelve 4-minute blocks, each listing the five players
+    /// on the floor.
+    #[serde(default)]
+    pub chart: Vec<Vec<PlayerId>>,
+    #[serde(default)]
+    pub strategy: TeamStrategy,
+    #[serde(default)]
+    pub coach: CoachSettings,
+}
+
+pub const CHART_BLOCKS: usize = 12;
+pub const CHART_BLOCK_MINUTES: u16 = 4;
+
+/// How a team's rotation is decided.
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum LineupMode {
+    /// The coach AI builds the rotation from roster quality and the coach sliders.
+    #[default]
+    Auto,
+    /// Owner picks starters and per-player minute targets.
+    Minutes,
+    /// Owner paints exactly who is on the floor in each 4-minute block.
+    Chart,
+}
+
+impl Team {
+    /// Effective lineup mode: old saves with custom starters behave as `Minutes`.
+    pub fn mode(&self) -> LineupMode {
+        match self.lineup_mode {
+            Some(mode) => mode,
+            None if self.starters.len() == 5 => LineupMode::Minutes,
+            None => LineupMode::Auto,
+        }
+    }
+}
+
+/// Team-wide play style. 0-100 per slider, 50 is neutral.
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct TeamStrategy {
+    /// Offense: faster = more possessions and more transition, more fatigue.
+    pub pace: u8,
+    /// Offense: share of shots taken from three.
+    pub three_rate: u8,
+    /// Offense: low = isolation/star-heavy usage, high = share the ball.
+    pub ball_movement: u8,
+    /// Offense: crash the offensive glass (leaves you open to fast breaks).
+    pub offensive_glass: u8,
+    /// Defense: gamble for steals (more steals + fouls + fatigue).
+    pub pressure: u8,
+    /// Defense: low = guard the arc, high = pack the paint.
+    pub interior_focus: u8,
+    /// Defense: crash the defensive glass (fewer players leak out on offense).
+    pub defensive_glass: u8,
+}
+
+impl Default for TeamStrategy {
+    fn default() -> Self {
+        Self {
+            pace: 50,
+            three_rate: 50,
+            ball_movement: 50,
+            offensive_glass: 50,
+            pressure: 50,
+            interior_focus: 50,
+            defensive_glass: 50,
+        }
+    }
+}
+
+impl TeamStrategy {
+    pub fn clamped(mut self) -> Self {
+        for value in [
+            &mut self.pace,
+            &mut self.three_rate,
+            &mut self.ball_movement,
+            &mut self.offensive_glass,
+            &mut self.pressure,
+            &mut self.interior_focus,
+            &mut self.defensive_glass,
+        ] {
+            *value = (*value).min(100);
+        }
+        self
+    }
+}
+
+/// Substitution philosophy shared by every lineup mode.
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct CoachSettings {
+    /// Pull players in foul trouble early (high) or let them play (low).
+    pub foul_caution: u8,
+    /// Lean on the starters (high = ~38 min) or spread minutes (low = ~28).
+    pub starter_load: u8,
+    /// Players in the rotation, 7-12 (Auto mode).
+    pub depth: u8,
+    /// Play through tiredness (high) or sub at the first sign of fatigue (low).
+    pub fatigue_tolerance: u8,
+    /// Keep the best five on the floor in close games late.
+    pub closers: bool,
+    /// Rest starters in blowouts.
+    pub blowout_bench: bool,
+    /// Keep at least one of the two best players on the floor (Auto mode).
+    pub stagger_stars: bool,
+}
+
+impl Default for CoachSettings {
+    fn default() -> Self {
+        Self {
+            foul_caution: 50,
+            starter_load: 50,
+            depth: 9,
+            fatigue_tolerance: 50,
+            closers: true,
+            blowout_bench: true,
+            stagger_stars: true,
+        }
+    }
+}
+
+impl CoachSettings {
+    pub fn clamped(mut self) -> Self {
+        self.foul_caution = self.foul_caution.min(100);
+        self.starter_load = self.starter_load.min(100);
+        self.fatigue_tolerance = self.fatigue_tolerance.min(100);
+        self.depth = self.depth.clamp(7, 12);
+        self
+    }
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -127,6 +263,13 @@ pub struct Ratings {
     pub block: u8,
     pub offensive_rebounding: u8,
     pub defensive_rebounding: u8,
+    /// Stamina: how slowly a player tires on the floor.
+    #[serde(default = "default_endurance")]
+    pub endurance: u8,
+}
+
+fn default_endurance() -> u8 {
+    60
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

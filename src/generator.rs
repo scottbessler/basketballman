@@ -48,6 +48,7 @@ pub fn generate_league(seed: u64) -> League {
                     block: skill(talent, flavor[10], &mut rng),
                     offensive_rebounding: skill(talent, flavor[11], &mut rng),
                     defensive_rebounding: skill(talent, flavor[12], &mut rng),
+                    endurance: endurance(flavor[13], &mut rng),
                 },
                 team_id: team_id.clone(),
             });
@@ -63,6 +64,11 @@ pub fn generate_league(seed: u64) -> League {
             owner_user_id: None,
             starters: Vec::new(),
             minute_targets: BTreeMap::new(),
+            lineup_mode: None,
+            bench_order: Vec::new(),
+            chart: Vec::new(),
+            strategy: Default::default(),
+            coach: Default::default(),
         });
     }
 
@@ -82,18 +88,23 @@ pub fn generate_league(seed: u64) -> League {
     }
 }
 
-fn position_flavor(position: Position) -> [i16; 13] {
+fn position_flavor(position: Position) -> [i16; 14] {
     match position {
-        Position::C => [55, 30, 66, 82, 22, 42, 38, 34, 88, 30, 92, 88, 92],
-        Position::PF => [54, 33, 70, 70, 34, 52, 48, 48, 72, 42, 72, 78, 82],
-        Position::SF => [53, 35, 76, 58, 50, 62, 60, 62, 58, 56, 48, 58, 64],
-        Position::SG => [52, 38, 82, 44, 68, 52, 70, 68, 38, 68, 28, 38, 46],
-        Position::PG => [50, 37, 84, 38, 74, 84, 86, 78, 28, 78, 22, 25, 35],
+        Position::C => [55, 30, 66, 82, 22, 42, 38, 34, 88, 30, 92, 88, 92, 54],
+        Position::PF => [54, 33, 70, 70, 34, 52, 48, 48, 72, 42, 72, 78, 82, 58],
+        Position::SF => [53, 35, 76, 58, 50, 62, 60, 62, 58, 56, 48, 58, 64, 62],
+        Position::SG => [52, 38, 82, 44, 68, 52, 70, 68, 38, 68, 28, 38, 46, 64],
+        Position::PG => [50, 37, 84, 38, 74, 84, 86, 78, 28, 78, 22, 25, 35, 66],
     }
 }
 
 fn skill(talent: i16, positional: i16, rng: &mut ChaCha8Rng) -> u8 {
     (positional + (talent - 50) / 2 + rng.gen_range(-12..=12)).clamp(0, 99) as u8
+}
+
+/// Stamina is mostly athletic/genetic, so it does not track overall talent.
+fn endurance(positional: i16, rng: &mut ChaCha8Rng) -> u8 {
+    (positional + rng.gen_range(-14..=14)).clamp(25, 95) as u8
 }
 
 fn percentage(talent: i16, positional: i16, min: i16, max: i16, rng: &mut ChaCha8Rng) -> u8 {

@@ -120,10 +120,10 @@ T18|x|test reset/regen/box-score invariants|V13,V19,V20,V21
 T19|x|extract pure game engine interface + rating-roll engine|C17,I.model,I.svc,V23,V24
 T20|x|add possession-by-possession engine|C18,I.svc,V24,V25
 T21|x|wire web simulation through engine interface + tests|I.web,V10,V13,V23,V24,V25
-T22|.|endurance rating + in-game fatigue energy/skill penalty|C21
-T23|.|personal fouls + foul-out|C22
-T24|.|team strategy sliders offense/defense in sim|C23
-T25|.|coach: auto/minutes/chart substitution engine + coach sliders + auto chart builder|C19,C20,C22
+T22|x|endurance rating + in-game fatigue energy/skill penalty|C21
+T23|x|personal fouls + foul-out|C22
+T24|x|team strategy sliders offense/defense in sim|C23
+T25|~|coach: auto/minutes/chart substitution engine + coach sliders + auto chart builder|C19,C20,C22
 T26|.|lineup editor page: depth drag/drop, paint-drag chart, sliders; mobile/touch|C24
 T27|.|NBA-shaped player pool generator (tiers, archetypes, ages, potential)|C30
 T28|.|contracts + hard cap + payroll UI; trades obey cap|C26

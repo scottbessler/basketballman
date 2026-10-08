@@ -1,5 +1,7 @@
+use crate::coach::{CoachCtx, CoachState, GAME_SECONDS, Rotation, fatigue_multiplier};
 use crate::models::{
-    Game, GameResult, GameStatus, League, PlayEvent, Player, PlayerGameStats, Team, TeamStats,
+    Game, GameResult, GameStatus, League, PlayEvent, Player, PlayerGameStats, Ratings, Team,
+    TeamStats, TeamStrategy,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -79,143 +81,297 @@ pub fn simulation_input<'a>(
     })
 }
 
+/// Energy a fresh player starts a game with.
+const FULL_ENERGY: f64 = 100.0;
+const FOUL_OUT: u8 = 6;
+
+/// Mutable per-team state while a game is simulated.
+struct TeamSim<'a> {
+    team: &'a Team,
+    players: &'a [&'a Player],
+    eff: Vec<Ratings>,
+    lineup: Vec<usize>,
+    lines: Vec<PlayerGameStats>,
+    energy: Vec<f64>,
+    fouls: Vec<u8>,
+    seconds: Vec<f64>,
+    stint_start: Vec<f64>,
+    last_exit: Vec<f64>,
+    rotation: Rotation,
+    coach: CoachState,
+    strategy: TeamStrategy,
+    score: u16,
+}
+
+impl<'a> TeamSim<'a> {
+    fn new(team: &'a Team, players: &'a [&'a Player]) -> Self {
+        let rotation = Rotation::new(team, players);
+        let lineup = rotation.opening_lineup();
+        Self {
+            team,
+            players,
+            eff: players
+                .iter()
+                .map(|player| player.ratings.clone())
+                .collect(),
+            lineup,
+            lines: empty_player_lines(team, players),
+            energy: vec![FULL_ENERGY; players.len()],
+            fouls: vec![0; players.len()],
+            seconds: vec![0.0; players.len()],
+            stint_start: vec![0.0; players.len()],
+            last_exit: vec![-1e9; players.len()],
+            rotation,
+            coach: CoachState::default(),
+            strategy: team.strategy.clamped(),
+            score: 0,
+        }
+    }
+
+    fn refresh_effective_ratings(&mut self) {
+        for (index, player) in self.players.iter().enumerate() {
+            self.eff[index] = effective_ratings(&player.ratings, self.energy[index]);
+        }
+    }
+
+    /// Ask the coach who should play and swap them in.
+    fn substitute(
+        &mut self,
+        elapsed: f64,
+        lead: i32,
+        half_start: bool,
+        plays: &mut Vec<PlayEvent>,
+        scores: (u16, u16),
+    ) {
+        let ctx = CoachCtx {
+            lineup: &self.lineup,
+            energy: &self.energy,
+            fouls: &self.fouls,
+            seconds: &self.seconds,
+            stint_start: &self.stint_start,
+            last_exit: &self.last_exit,
+            elapsed,
+            lead,
+            half_start,
+        };
+        let next = self.rotation.next_lineup(&ctx, &mut self.coach);
+        if next.len() != 5 {
+            return;
+        }
+        let entering: Vec<usize> = next
+            .iter()
+            .copied()
+            .filter(|index| !self.lineup.contains(index))
+            .collect();
+        let leaving: Vec<usize> = self
+            .lineup
+            .iter()
+            .copied()
+            .filter(|index| !next.contains(index))
+            .collect();
+        for outgoing in &leaving {
+            self.last_exit[*outgoing] = elapsed;
+        }
+        for (slot, incoming) in entering.iter().enumerate() {
+            self.stint_start[*incoming] = elapsed;
+            if let Some(outgoing) = leaving.get(slot) {
+                let (quarter, clock) = game_clock(elapsed);
+                plays.push(PlayEvent {
+                    quarter,
+                    clock,
+                    team_id: self.team.id.clone(),
+                    description: format!(
+                        "Substitution: {} in for {}",
+                        self.players[*incoming].name, self.players[*outgoing].name
+                    ),
+                    away_score: scores.0,
+                    home_score: scores.1,
+                });
+            }
+        }
+        self.lineup = next;
+    }
+
+    /// Drain the floor, refresh the bench.
+    fn update_energy(&mut self, iteration_seconds: f64) {
+        let minutes = iteration_seconds / 60.0;
+        let strategy_load =
+            (1.0 + 0.2 * slider(self.strategy.pace)) * (1.0 + 0.2 * slider(self.strategy.pressure));
+        for index in 0..self.energy.len() {
+            let endurance = self.players[index].ratings.endurance as f64;
+            if self.lineup.contains(&index) {
+                let drain_per_minute = (6.4 - 0.04 * endurance) * strategy_load;
+                self.energy[index] -= drain_per_minute * minutes;
+            } else {
+                self.energy[index] += (2.4 + 0.015 * endurance) * minutes;
+            }
+            self.energy[index] = self.energy[index].clamp(0.0, FULL_ENERGY);
+        }
+    }
+
+    fn quarter_break(&mut self, halftime: bool) {
+        let recovery = if halftime { 22.0 } else { 6.0 };
+        for energy in &mut self.energy {
+            *energy = (*energy + recovery).min(FULL_ENERGY);
+        }
+    }
+
+    fn credit_floor_time(&mut self, amount: f64) {
+        for index in &self.lineup {
+            self.seconds[*index] += amount;
+        }
+    }
+}
+
+/// Map a 0-100 slider to -1.0..=1.0 around neutral 50.
+fn slider(value: u8) -> f64 {
+    (value.min(100) as f64 - 50.0) / 50.0
+}
+
+/// Ratings after fatigue. Skills fall by up to 28%; percentage ratings feel
+/// half of that so a gassed shooter is worse, not hopeless.
+pub fn effective_ratings(base: &Ratings, energy: f64) -> Ratings {
+    let penalty = 1.0 - fatigue_multiplier(energy);
+    let skill = 1.0 - penalty;
+    let pct = 1.0 - penalty * 0.5;
+    let scale = |value: u8, factor: f64| (value as f64 * factor).round().clamp(0.0, 99.0) as u8;
+    Ratings {
+        two_point_pct: scale(base.two_point_pct, pct),
+        three_point_pct: scale(base.three_point_pct, pct),
+        ft_pct: scale(base.ft_pct, pct),
+        inside_scoring: scale(base.inside_scoring, skill),
+        three_tendency: base.three_tendency,
+        passing: scale(base.passing, skill),
+        ball_handling: scale(base.ball_handling, skill),
+        perimeter_defense: scale(base.perimeter_defense, skill),
+        interior_defense: scale(base.interior_defense, skill),
+        steal: scale(base.steal, skill),
+        block: scale(base.block, skill),
+        offensive_rebounding: scale(base.offensive_rebounding, skill),
+        defensive_rebounding: scale(base.defensive_rebounding, skill),
+        endurance: base.endurance,
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Ending {
+    Scored,
+    FreeThrows,
+    DefensiveRebound,
+    Turnover { steal: bool },
+    Other,
+}
+
+struct Outcome {
+    points: u16,
+    ending: Ending,
+}
+
 impl PossessionEngine {
     pub fn simulate(&self, input: &GameSimulationInput<'_>) -> GameResult {
         let mut rng = game_rng(input.seed, &input.game.id);
-        let possessions = rng.gen_range(96..=106);
-        let mut home_lines = empty_player_lines(input.home_team, &input.home_players);
-        let mut away_lines = empty_player_lines(input.away_team, &input.away_players);
-        let mut home_seconds = vec![0.0; input.home_players.len()];
-        let mut away_seconds = vec![0.0; input.away_players.len()];
-        let mut home_lineup = starting_lineup(input.home_team, &input.home_players);
-        let mut away_lineup = starting_lineup(input.away_team, &input.away_players);
-        let home_targets = target_seconds(input.home_team, &input.home_players);
-        let away_targets = target_seconds(input.away_team, &input.away_players);
-        let mut home_score = 0u16;
-        let mut away_score = 0u16;
+        let mut home = TeamSim::new(input.home_team, &input.home_players);
+        let mut away = TeamSim::new(input.away_team, &input.away_players);
+        let pace_shift = (slider(home.strategy.pace) + slider(away.strategy.pace)) / 2.0 * 7.0;
+        let possessions = (rng.gen_range(96..=106) as f64 + pace_shift)
+            .round()
+            .max(80.0) as u16;
         let mut plays: Vec<PlayEvent> = Vec::new();
-        let seconds_per_iteration = 2880.0 / possessions as f64;
+        let seconds_per_iteration = GAME_SECONDS / possessions as f64;
+        let mut home_transition = false;
+        let mut away_transition;
 
         for iteration in 0..possessions {
             let home_elapsed = iteration as f64 * seconds_per_iteration;
             let away_elapsed = home_elapsed + seconds_per_iteration / 2.0;
-            credit_floor_time(&home_lineup, &mut home_seconds, seconds_per_iteration);
-            credit_floor_time(&away_lineup, &mut away_seconds, seconds_per_iteration);
+            let quarter_now = (home_elapsed / 720.0) as u32;
+            let quarter_before = ((home_elapsed - seconds_per_iteration).max(0.0) / 720.0) as u32;
+            if iteration > 0 && quarter_now > quarter_before {
+                let halftime = quarter_now == 2;
+                home.quarter_break(halftime);
+                away.quarter_break(halftime);
+            }
+            let half_start = iteration == 0
+                || (home_elapsed >= 1440.0 && home_elapsed - seconds_per_iteration < 1440.0);
+            let lead = home.score as i32 - away.score as i32;
+            let scores = (away.score, home.score);
+            if iteration > 0 {
+                home.substitute(home_elapsed, lead, half_start, &mut plays, scores);
+                away.substitute(home_elapsed, -lead, half_start, &mut plays, scores);
+            }
+            home.refresh_effective_ratings();
+            away.refresh_effective_ratings();
+            home.credit_floor_time(seconds_per_iteration);
+            away.credit_floor_time(seconds_per_iteration);
+
             let events_before = plays.len();
-            let home_points = simulate_possession(
-                &input.home_players,
-                &home_lineup,
-                &input.away_players,
-                &away_lineup,
-                &mut home_lines,
-                &mut away_lines,
+            let outcome = simulate_possession(
+                &mut home,
+                &mut away,
                 input.config.home_advantage,
+                home_transition,
                 &mut rng,
                 &mut plays,
-                PossessionTeams {
-                    offense_team_id: &input.home_team.id,
-                    defense_team_id: &input.away_team.id,
-                },
                 home_elapsed,
             );
-            apply_possession_plus_minus(
-                &mut home_lines,
-                &home_lineup,
-                &mut away_lines,
-                &away_lineup,
-                home_points,
-                0,
-            );
-            home_score += home_points;
-            stamp_scores(&mut plays[events_before..], away_score, home_score);
+            apply_possession_plus_minus(&mut home, &mut away, outcome.points, 0);
+            home.score += outcome.points;
+            stamp_scores(&mut plays[events_before..], away.score, home.score);
+            away_transition = rng.gen_bool(transition_chance(outcome.ending, &away, &home));
+
             let events_before = plays.len();
-            let away_points = simulate_possession(
-                &input.away_players,
-                &away_lineup,
-                &input.home_players,
-                &home_lineup,
-                &mut away_lines,
-                &mut home_lines,
+            let outcome = simulate_possession(
+                &mut away,
+                &mut home,
                 0,
+                away_transition,
                 &mut rng,
                 &mut plays,
-                PossessionTeams {
-                    offense_team_id: &input.away_team.id,
-                    defense_team_id: &input.home_team.id,
-                },
                 away_elapsed,
             );
-            apply_possession_plus_minus(
-                &mut home_lines,
-                &home_lineup,
-                &mut away_lines,
-                &away_lineup,
-                0,
-                away_points,
-            );
-            away_score += away_points;
-            stamp_scores(&mut plays[events_before..], away_score, home_score);
-            substitute(
-                &mut home_lineup,
-                &home_seconds,
-                &home_targets,
-                seconds_per_iteration,
-            );
-            substitute(
-                &mut away_lineup,
-                &away_seconds,
-                &away_targets,
-                seconds_per_iteration,
-            );
+            apply_possession_plus_minus(&mut home, &mut away, 0, outcome.points);
+            away.score += outcome.points;
+            stamp_scores(&mut plays[events_before..], away.score, home.score);
+            home_transition = rng.gen_bool(transition_chance(outcome.ending, &home, &away));
+
+            home.update_energy(seconds_per_iteration);
+            away.update_energy(seconds_per_iteration);
         }
 
-        finalize_minutes(&mut home_lines, &home_seconds);
-        finalize_minutes(&mut away_lines, &away_seconds);
+        finalize_minutes(&mut home.lines, &home.seconds);
+        finalize_minutes(&mut away.lines, &away.seconds);
 
-        if home_score == away_score {
+        if home.score == away.score {
             if rng.gen_bool(0.5) {
-                let scorer = add_points_to_best(&mut home_lines, 1);
-                apply_possession_plus_minus(
-                    &mut home_lines,
-                    &home_lineup,
-                    &mut away_lines,
-                    &away_lineup,
-                    1,
-                    0,
-                );
-                home_score += 1;
+                let scorer = add_points_to_best(&mut home.lines, 1);
+                apply_possession_plus_minus(&mut home, &mut away, 1, 0);
+                home.score += 1;
                 push_tiebreak_event(
                     &mut plays,
                     &input.home_team.id,
                     &input.home_players,
                     scorer,
-                    away_score,
-                    home_score,
+                    away.score,
+                    home.score,
                 );
             } else {
-                let scorer = add_points_to_best(&mut away_lines, 1);
-                apply_possession_plus_minus(
-                    &mut home_lines,
-                    &home_lineup,
-                    &mut away_lines,
-                    &away_lineup,
-                    0,
-                    1,
-                );
-                away_score += 1;
+                let scorer = add_points_to_best(&mut away.lines, 1);
+                apply_possession_plus_minus(&mut home, &mut away, 0, 1);
+                away.score += 1;
                 push_tiebreak_event(
                     &mut plays,
                     &input.away_team.id,
                     &input.away_players,
                     scorer,
-                    away_score,
-                    home_score,
+                    away.score,
+                    home.score,
                 );
             }
         }
 
-        let mut player_stats = home_lines;
-        player_stats.extend(away_lines);
+        let (home_score, away_score) = (home.score, away.score);
+        let mut player_stats = home.lines;
+        player_stats.extend(away.lines);
         result_from_scores(
             input,
             home_score,
@@ -227,149 +383,420 @@ impl PossessionEngine {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn simulate_possession(
-    offense: &[&Player],
-    offense_lineup: &[usize],
-    defense: &[&Player],
-    defense_lineup: &[usize],
-    lines: &mut [PlayerGameStats],
-    defense_lines: &mut [PlayerGameStats],
-    advantage: i16,
+/// Odds the next possession starts as a fast break.
+fn transition_chance(
+    ending: Ending,
+    next_offense: &TeamSim<'_>,
+    last_offense: &TeamSim<'_>,
+) -> f64 {
+    let base = match ending {
+        Ending::DefensiveRebound => 0.08,
+        Ending::Turnover { steal: true } => 0.32,
+        Ending::Turnover { steal: false } => 0.12,
+        Ending::Scored | Ending::FreeThrows | Ending::Other => 0.0,
+    };
+    if base == 0.0 {
+        return 0.0;
+    }
+    // Fast teams run more; a team that crashed the offensive glass has
+    // fewer players back; crashing your own defensive glass slows your break.
+    (base
+        + 0.07 * slider(next_offense.strategy.pace)
+        + 0.06 * slider(last_offense.strategy.offensive_glass)
+        - 0.05 * slider(next_offense.strategy.defensive_glass))
+    .clamp(0.02, 0.5)
+}
+
+/// Defensive pressure the shooting side faces, after strategy adjustments.
+#[derive(Copy, Clone)]
+struct DefensiveContest {
+    perimeter: f64,
+    interior: f64,
+    steal_pressure: f64,
+    block_pressure: f64,
+}
+
+fn defensive_contest(defense: &TeamSim<'_>) -> DefensiveContest {
+    let lineup = &defense.lineup;
+    if lineup.is_empty() {
+        return DefensiveContest {
+            perimeter: 50.0,
+            interior: 50.0,
+            steal_pressure: 50.0,
+            block_pressure: 50.0,
+        };
+    }
+    let count = lineup.len() as f64;
+    let average = |pick: fn(&Ratings) -> u8| {
+        lineup
+            .iter()
+            .map(|index| pick(&defense.eff[*index]) as f64)
+            .sum::<f64>()
+            / count
+    };
+    let focus = slider(defense.strategy.interior_focus);
+    let pressure = slider(defense.strategy.pressure);
+    DefensiveContest {
+        perimeter: average(|r| r.perimeter_defense) * (1.0 - 0.15 * focus),
+        interior: average(|r| r.interior_defense) * (1.0 + 0.15 * focus),
+        steal_pressure: average(|r| r.steal) * (1.0 + 0.35 * pressure),
+        block_pressure: average(|r| r.block),
+    }
+}
+
+fn pick_weighted(lineup: &[usize], weights: &[f64], rng: &mut ChaCha8Rng) -> usize {
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 || lineup.is_empty() {
+        return lineup.first().copied().unwrap_or(0);
+    }
+    let mut ticket = rng.gen_range(0.0..total);
+    for (slot, weight) in weights.iter().enumerate() {
+        if ticket < *weight {
+            return lineup[slot];
+        }
+        ticket -= *weight;
+    }
+    lineup[lineup.len() - 1]
+}
+
+fn pick_shooter(offense: &TeamSim<'_>, rng: &mut ChaCha8Rng) -> usize {
+    // Low ball movement concentrates shots on the best scorers; high spreads them.
+    let exponent = 1.0 - 0.45 * slider(offense.strategy.ball_movement);
+    let weights: Vec<f64> = offense
+        .lineup
+        .iter()
+        .map(|index| usage_weight(&offense.eff[*index]).powf(exponent))
+        .collect();
+    pick_weighted(&offense.lineup, &weights, rng)
+}
+
+fn pick_by(team: &TeamSim<'_>, rng: &mut ChaCha8Rng, weight_of: impl Fn(&Ratings) -> f64) -> usize {
+    let weights: Vec<f64> = team
+        .lineup
+        .iter()
+        .map(|index| weight_of(&team.eff[*index]) + 5.0)
+        .collect();
+    pick_weighted(&team.lineup, &weights, rng)
+}
+
+/// Charge a personal foul to a defender (never someone already fouled out
+/// while an alternative exists).
+fn charge_foul(
+    defense: &mut TeamSim<'_>,
     rng: &mut ChaCha8Rng,
     plays: &mut Vec<PlayEvent>,
-    teams: PossessionTeams<'_>,
-    elapsed_seconds: f64,
-) -> u16 {
-    for _ in 0..=2 {
-        let shooter_index = weighted_player_index(offense, offense_lineup, rng);
-        let shooter = offense[shooter_index];
-        let contest = average_defensive_contest(defense, defense_lineup);
-        let foul_chance = (5 + shooter.ratings.inside_scoring / 14).clamp(5, 12);
+    elapsed: f64,
+) -> usize {
+    let weights: Vec<f64> = defense
+        .lineup
+        .iter()
+        .map(|index| {
+            if defense.fouls[*index] >= FOUL_OUT {
+                0.0
+            } else {
+                let r = &defense.eff[*index];
+                45.0 + r.block as f64 * 0.2
+                    + r.steal as f64 * 0.15
+                    + r.interior_defense as f64 * 0.15
+            }
+        })
+        .collect();
+    let fouler = pick_weighted(&defense.lineup, &weights, rng);
+    defense.fouls[fouler] += 1;
+    defense.lines[fouler].fouls += 1;
+    if defense.fouls[fouler] == FOUL_OUT {
+        let name = defense.players[fouler].name.clone();
+        push_event(
+            plays,
+            &defense.team.id,
+            elapsed,
+            format!("{name} fouls out"),
+        );
+    }
+    fouler
+}
 
-        if rng.gen_range(0..100) < foul_chance {
+fn simulate_possession(
+    offense: &mut TeamSim<'_>,
+    defense: &mut TeamSim<'_>,
+    advantage: i16,
+    transition: bool,
+    rng: &mut ChaCha8Rng,
+    plays: &mut Vec<PlayEvent>,
+    elapsed: f64,
+) -> Outcome {
+    let contest = defensive_contest(defense);
+    let pressure = slider(defense.strategy.pressure);
+    let movement = slider(offense.strategy.ball_movement);
+    let offense_team_id = offense.team.id.clone();
+    let defense_team_id = defense.team.id.clone();
+
+    // Non-shooting foul: stops play, charges a defender, no free throws.
+    if !transition && rng.gen_bool((0.11 + 0.03 * pressure).clamp(0.02, 0.25)) {
+        let fouler = charge_foul(defense, rng, plays, elapsed);
+        let description = format!(
+            "{} personal foul ({})",
+            defense.players[fouler].name, defense.fouls[fouler]
+        );
+        push_event(plays, &defense_team_id, elapsed, description);
+    }
+
+    for attempt in 0..3 {
+        let fast_break = transition && attempt == 0;
+        let shooter_index = pick_shooter(offense, rng);
+        let shooter_name = offense.players[shooter_index].name.clone();
+        let shooter = offense.eff[shooter_index].clone();
+
+        let foul_chance = (5.0 + shooter.inside_scoring as f64 / 14.0).clamp(5.0, 12.0)
+            + 1.5 * pressure
+            + if fast_break { 2.0 } else { 0.0 };
+        if rng.gen_range(0.0..100.0) < foul_chance {
+            let fouler = charge_foul(defense, rng, plays, elapsed);
             let attempts = if rng.gen_bool(0.16) { 3 } else { 2 };
             let made = (0..attempts)
-                .filter(|_| rng.gen_range(0..100) < shooter.ratings.ft_pct)
+                .filter(|_| rng.gen_range(0..100) < shooter.ft_pct)
                 .count() as u16;
-            lines[shooter_index].free_throws_attempted += attempts;
-            lines[shooter_index].free_throws_made += made;
-            lines[shooter_index].points += made;
+            let line = &mut offense.lines[shooter_index];
+            line.free_throws_attempted += attempts;
+            line.free_throws_made += made;
+            line.points += made;
             push_event(
                 plays,
-                teams.offense_team_id,
-                elapsed_seconds,
+                &offense_team_id,
+                elapsed,
                 format!(
-                    "{} makes {} of {} free throws",
-                    shooter.name, made, attempts
+                    "{} makes {} of {} free throws (foul: {}, {})",
+                    shooter_name,
+                    made,
+                    attempts,
+                    defense.players[fouler].name,
+                    defense.fouls[fouler]
                 ),
             );
-            return made;
+            return Outcome {
+                points: made,
+                ending: Ending::FreeThrows,
+            };
         }
 
-        if rng.gen_range(0..100) < turnover_chance(shooter, contest.steal_pressure) {
-            lines[shooter_index].turnovers += 1;
-            let mut description = format!("{} turnover", shooter.name);
-            if rng.gen_bool(0.70)
-                && let Some(stealer) = weighted_defender_index(defense, defense_lineup, rng, |p| {
-                    p.ratings.steal as u16
-                })
-            {
-                defense_lines[stealer].steals += 1;
+        let turnover_chance = if fast_break {
+            3.0
+        } else {
+            (11.0 + (contest.steal_pressure - shooter.ball_handling as f64) / 6.0).clamp(7.0, 18.0)
+                + 2.2 * pressure
+                + 0.8 * movement
+        };
+        if rng.gen_range(0.0..100.0) < turnover_chance {
+            offense.lines[shooter_index].turnovers += 1;
+            let mut description = format!("{shooter_name} turnover");
+            let mut steal = false;
+            if rng.gen_bool((0.70 + 0.10 * pressure).clamp(0.3, 0.9)) {
+                let stealer = pick_by(defense, rng, |r| r.steal as f64);
+                defense.lines[stealer].steals += 1;
                 description = format!(
                     "{} turnover ({} steals)",
-                    shooter.name, defense[stealer].name
+                    shooter_name, defense.players[stealer].name
                 );
+                steal = true;
             }
-            push_event(plays, teams.offense_team_id, elapsed_seconds, description);
-            return 0;
+            push_event(plays, &offense_team_id, elapsed, description);
+            return Outcome {
+                points: 0,
+                ending: Ending::Turnover { steal },
+            };
         }
 
-        let three_probability = (0.15 + shooter.ratings.three_tendency as f64 / 330.0
-            - shooter.ratings.inside_scoring as f64 / 1400.0
-            + contest.perimeter as f64 / 3000.0)
-            .clamp(0.15, 0.45);
+        let three_probability = if fast_break {
+            0.0
+        } else {
+            (0.15 + shooter.three_tendency as f64 / 330.0 - shooter.inside_scoring as f64 / 1400.0
+                + contest.perimeter / 3000.0
+                + 0.10 * slider(offense.strategy.three_rate))
+            .clamp(0.05, 0.6)
+        };
         let three = rng.gen_bool(three_probability);
-        let make_threshold = shot_make_threshold(shooter, contest, three, advantage);
+        let mut make_threshold = shot_make_threshold(&shooter, contest, three, advantage);
+        make_threshold += 2.0 * movement;
+        if fast_break {
+            make_threshold += 12.0;
+        }
+        let make_threshold = make_threshold.clamp(
+            if three { 20.0 } else { 30.0 },
+            if three { 48.0 } else { 72.0 },
+        );
         let shot_label = if three { "three point" } else { "two point" };
-        lines[shooter_index].field_goals_attempted += 1;
+        offense.lines[shooter_index].field_goals_attempted += 1;
         if three {
-            lines[shooter_index].three_pointers_attempted += 1;
+            offense.lines[shooter_index].three_pointers_attempted += 1;
         }
 
-        if rng.gen_range(0..100) < make_threshold {
-            lines[shooter_index].field_goals_made += 1;
+        if rng.gen_range(0.0..100.0) < make_threshold {
+            let line = &mut offense.lines[shooter_index];
+            line.field_goals_made += 1;
             let points = if three { 3 } else { 2 };
             if three {
-                lines[shooter_index].three_pointers_made += 1;
+                line.three_pointers_made += 1;
             }
-            lines[shooter_index].points += points;
-            let passer = credit_assist(offense, offense_lineup, lines, shooter_index, rng);
+            line.points += points;
+            let passer = credit_assist(offense, shooter_index, rng);
             let description = match passer {
                 Some(passer_index) => format!(
                     "{} makes {} shot ({} assists)",
-                    shooter.name, shot_label, offense[passer_index].name
+                    shooter_name, shot_label, offense.players[passer_index].name
                 ),
-                None => format!("{} makes {} shot", shooter.name, shot_label),
+                None => format!("{shooter_name} makes {shot_label} shot"),
             };
-            push_event(plays, teams.offense_team_id, elapsed_seconds, description);
-            return points;
+            push_event(plays, &offense_team_id, elapsed, description);
+            return Outcome {
+                points,
+                ending: Ending::Scored,
+            };
         }
 
         let block_chance = if three {
-            1 + contest.block_pressure / 25
+            1.0 + contest.block_pressure / 25.0
         } else {
-            5 + contest.block_pressure / 8
+            5.0 + contest.block_pressure / 8.0
         };
-        let mut description = format!("{} misses {} shot", shooter.name, shot_label);
-        if rng.gen_range(0..100) < block_chance
-            && let Some(blocker) =
-                weighted_defender_index(defense, defense_lineup, rng, |p| p.ratings.block as u16)
-        {
-            defense_lines[blocker].blocks += 1;
+        let mut description = format!("{shooter_name} misses {shot_label} shot");
+        if rng.gen_range(0.0..100.0) < block_chance {
+            let blocker = pick_by(defense, rng, |r| r.block as f64);
+            defense.lines[blocker].blocks += 1;
             description = format!(
                 "{} blocks {}'s {} shot",
-                defense[blocker].name, shooter.name, shot_label
+                defense.players[blocker].name, shooter_name, shot_label
             );
         }
-        push_event(plays, teams.offense_team_id, elapsed_seconds, description);
-        match credit_rebound(
-            lines,
-            defense_lines,
-            offense,
-            offense_lineup,
-            defense,
-            defense_lineup,
-            rng,
-        ) {
+        push_event(plays, &offense_team_id, elapsed, description);
+        match credit_rebound(offense, defense, rng) {
             Rebound::Offensive(rebounder) => {
+                let name = offense.players[rebounder].name.clone();
                 push_event(
                     plays,
-                    teams.offense_team_id,
-                    elapsed_seconds,
-                    format!("{} offensive rebound", offense[rebounder].name),
+                    &offense_team_id,
+                    elapsed,
+                    format!("{name} offensive rebound"),
                 );
                 continue;
             }
             Rebound::Defensive(rebounder) => {
+                let name = defense.players[rebounder].name.clone();
                 push_event(
                     plays,
-                    teams.defense_team_id,
-                    elapsed_seconds,
-                    format!("{} defensive rebound", defense[rebounder].name),
+                    &defense_team_id,
+                    elapsed,
+                    format!("{name} defensive rebound"),
                 );
+                return Outcome {
+                    points: 0,
+                    ending: Ending::DefensiveRebound,
+                };
             }
             Rebound::None => {}
         }
-        return 0;
+        return Outcome {
+            points: 0,
+            ending: Ending::Other,
+        };
     }
-    0
+    Outcome {
+        points: 0,
+        ending: Ending::Other,
+    }
+}
+
+fn shot_make_threshold(
+    player: &Ratings,
+    contest: DefensiveContest,
+    three: bool,
+    advantage: i16,
+) -> f64 {
+    let base = if three {
+        player.three_point_pct as f64 - 3.0 - (contest.perimeter - 50.0) / 8.0
+    } else {
+        player.two_point_pct as f64
+            - 6.0
+            - (contest.interior - 50.0) / 8.0
+            - (contest.perimeter - 50.0) / 12.0
+            + (player.inside_scoring as f64 - 50.0) / 20.0
+    };
+    base + advantage as f64 / 2.0
+}
+
+fn credit_assist(
+    offense: &mut TeamSim<'_>,
+    shooter_index: usize,
+    rng: &mut ChaCha8Rng,
+) -> Option<usize> {
+    let chance = 0.58 + 0.15 * slider(offense.strategy.ball_movement);
+    if offense.lineup.len() <= 1 || !rng.gen_bool(chance) {
+        return None;
+    }
+    let mut passer = pick_by(offense, rng, |r| r.passing as f64);
+    if passer == shooter_index {
+        let slot = offense
+            .lineup
+            .iter()
+            .position(|index| *index == shooter_index)
+            .unwrap_or(0);
+        passer = offense.lineup[(slot + 1) % offense.lineup.len()];
+    }
+    offense.lines[passer].assists += 1;
+    Some(passer)
 }
 
 #[derive(Copy, Clone)]
-struct PossessionTeams<'a> {
-    offense_team_id: &'a str,
-    defense_team_id: &'a str,
+enum Rebound {
+    Offensive(usize),
+    Defensive(usize),
+    None,
+}
+
+fn credit_rebound(
+    offense: &mut TeamSim<'_>,
+    defense: &mut TeamSim<'_>,
+    rng: &mut ChaCha8Rng,
+) -> Rebound {
+    if offense.lineup.is_empty() || defense.lineup.is_empty() {
+        return Rebound::None;
+    }
+    let offense_strength = offense
+        .lineup
+        .iter()
+        .map(|index| {
+            offense.eff[*index].offensive_rebounding as f64
+                + offense.eff[*index].inside_scoring as f64 / 4.0
+        })
+        .sum::<f64>()
+        / offense.lineup.len() as f64;
+    let defense_strength = defense
+        .lineup
+        .iter()
+        .map(|index| defense.eff[*index].defensive_rebounding as f64)
+        .sum::<f64>()
+        / defense.lineup.len() as f64;
+    let offense_share = (25.0
+        + (offense_strength - defense_strength) * 0.18
+        + 7.0 * slider(offense.strategy.offensive_glass)
+        - 5.0 * slider(defense.strategy.defensive_glass))
+    .clamp(12.0, 42.0);
+    if rng.gen_bool(offense_share / 100.0) {
+        let rebounder = pick_by(offense, rng, |r| r.offensive_rebounding as f64);
+        offense.lines[rebounder].rebounds += 1;
+        Rebound::Offensive(rebounder)
+    } else {
+        let rebounder = pick_by(defense, rng, |r| r.defensive_rebounding as f64);
+        defense.lines[rebounder].rebounds += 1;
+        Rebound::Defensive(rebounder)
+    }
+}
+
+fn usage_weight(r: &Ratings) -> f64 {
+    (r.inside_scoring as f64 * 2.0
+        + r.three_tendency as f64
+        + r.three_point_pct as f64
+        + r.two_point_pct as f64)
+        .max(1.0)
 }
 
 fn push_event(
@@ -424,30 +851,6 @@ fn game_clock(elapsed_seconds: f64) -> (u8, String) {
     (quarter, format!("{}:{:02}", remaining / 60, remaining % 60))
 }
 
-fn weighted_defender_index(
-    defense: &[&Player],
-    defense_lineup: &[usize],
-    rng: &mut ChaCha8Rng,
-    weight_of: impl Fn(&Player) -> u16,
-) -> Option<usize> {
-    if defense_lineup.is_empty() {
-        return None;
-    }
-    let weights: Vec<u16> = defense_lineup
-        .iter()
-        .map(|index| weight_of(defense[*index]).saturating_add(5))
-        .collect();
-    let total: u16 = weights.iter().sum();
-    let mut ticket = rng.gen_range(0..total.max(1));
-    for (slot, weight) in weights.iter().enumerate() {
-        if ticket < *weight {
-            return Some(defense_lineup[slot]);
-        }
-        ticket -= *weight;
-    }
-    defense_lineup.last().copied()
-}
-
 fn result_from_scores(
     input: &GameSimulationInput<'_>,
     home_score: u16,
@@ -478,20 +881,18 @@ fn result_from_scores(
 }
 
 fn apply_possession_plus_minus(
-    home_lines: &mut [PlayerGameStats],
-    home_lineup: &[usize],
-    away_lines: &mut [PlayerGameStats],
-    away_lineup: &[usize],
+    home: &mut TeamSim<'_>,
+    away: &mut TeamSim<'_>,
     home_points: u16,
     away_points: u16,
 ) {
     let home_delta = home_points as i16 - away_points as i16;
     let away_delta = -home_delta;
-    for index in home_lineup {
-        home_lines[*index].plus_minus += home_delta;
+    for index in &home.lineup {
+        home.lines[*index].plus_minus += home_delta;
     }
-    for index in away_lineup {
-        away_lines[*index].plus_minus += away_delta;
+    for index in &away.lineup {
+        away.lines[*index].plus_minus += away_delta;
     }
 }
 
@@ -527,204 +928,6 @@ fn roster_players<'a>(league: &'a League, team: &Team) -> Vec<&'a Player> {
         .collect()
 }
 
-fn weighted_player_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha8Rng) -> usize {
-    let weights: Vec<u16> = lineup
-        .iter()
-        .map(|index| {
-            let player = players[*index];
-            usage_weight(player)
-        })
-        .collect();
-    let total: u16 = weights.iter().sum();
-    let mut ticket = rng.gen_range(0..total.max(1));
-    for (slot, weight) in weights.iter().enumerate() {
-        if ticket < *weight {
-            return lineup[slot];
-        }
-        ticket -= *weight;
-    }
-    lineup.last().copied().unwrap_or(0)
-}
-
-#[derive(Copy, Clone)]
-struct DefensiveContest {
-    perimeter: u8,
-    interior: u8,
-    steal_pressure: u8,
-    block_pressure: u8,
-}
-
-fn average_defensive_contest(players: &[&Player], lineup: &[usize]) -> DefensiveContest {
-    if lineup.is_empty() {
-        return DefensiveContest {
-            perimeter: 50,
-            interior: 50,
-            steal_pressure: 50,
-            block_pressure: 50,
-        };
-    }
-    let count = lineup.len() as u16;
-    DefensiveContest {
-        perimeter: (lineup
-            .iter()
-            .map(|index| players[*index].ratings.perimeter_defense as u16)
-            .sum::<u16>()
-            / count) as u8,
-        interior: (lineup
-            .iter()
-            .map(|index| players[*index].ratings.interior_defense as u16)
-            .sum::<u16>()
-            / count) as u8,
-        steal_pressure: (lineup
-            .iter()
-            .map(|index| players[*index].ratings.steal as u16)
-            .sum::<u16>()
-            / count) as u8,
-        block_pressure: (lineup
-            .iter()
-            .map(|index| players[*index].ratings.block as u16)
-            .sum::<u16>()
-            / count) as u8,
-    }
-}
-
-fn turnover_chance(player: &Player, steal_pressure: u8) -> u8 {
-    (11 + steal_pressure.saturating_sub(player.ratings.ball_handling) / 6).clamp(7, 18)
-}
-
-fn shot_make_threshold(
-    player: &Player,
-    contest: DefensiveContest,
-    three: bool,
-    advantage: i16,
-) -> u8 {
-    let base = if three {
-        player.ratings.three_point_pct as i16 - 3 - (contest.perimeter as i16 - 50) / 8
-    } else {
-        player.ratings.two_point_pct as i16
-            - 6
-            - (contest.interior as i16 - 50) / 8
-            - (contest.perimeter as i16 - 50) / 12
-            + (player.ratings.inside_scoring as i16 - 50) / 20
-    };
-    (base + advantage / 2).clamp(if three { 25 } else { 38 }, if three { 48 } else { 67 }) as u8
-}
-
-fn credit_assist(
-    players: &[&Player],
-    lineup: &[usize],
-    lines: &mut [PlayerGameStats],
-    shooter_index: usize,
-    rng: &mut ChaCha8Rng,
-) -> Option<usize> {
-    if lineup.len() <= 1 || !rng.gen_bool(0.58) {
-        return None;
-    }
-    let mut passer_index = weighted_passing_index(players, lineup, rng);
-    if passer_index == shooter_index {
-        let shooter_slot = lineup
-            .iter()
-            .position(|index| *index == shooter_index)
-            .unwrap_or(0);
-        passer_index = lineup[(shooter_slot + 1) % lineup.len()];
-    }
-    lines[passer_index].assists += 1;
-    Some(passer_index)
-}
-
-fn weighted_passing_index(players: &[&Player], lineup: &[usize], rng: &mut ChaCha8Rng) -> usize {
-    let weights: Vec<u16> = lineup
-        .iter()
-        .map(|index| players[*index].ratings.passing as u16 + 5)
-        .collect();
-    let total: u16 = weights.iter().sum();
-    let mut ticket = rng.gen_range(0..total.max(1));
-    for (slot, weight) in weights.iter().enumerate() {
-        if ticket < *weight {
-            return lineup[slot];
-        }
-        ticket -= *weight;
-    }
-    lineup.last().copied().unwrap_or(0)
-}
-
-fn credit_rebound(
-    lines: &mut [PlayerGameStats],
-    defense_lines: &mut [PlayerGameStats],
-    offense: &[&Player],
-    offense_lineup: &[usize],
-    defense: &[&Player],
-    defense_lineup: &[usize],
-    rng: &mut ChaCha8Rng,
-) -> Rebound {
-    if offense_lineup.is_empty() || defense_lineup.is_empty() {
-        return Rebound::None;
-    }
-    let offense_strength: u16 = offense_lineup
-        .iter()
-        .map(|index| {
-            offense[*index].ratings.offensive_rebounding as u16
-                + offense[*index].ratings.inside_scoring as u16 / 4
-        })
-        .sum();
-    let defense_strength: u16 = defense_lineup
-        .iter()
-        .map(|index| defense[*index].ratings.defensive_rebounding as u16)
-        .sum();
-    let offense_share = (25.0
-        + (offense_strength as f64 / offense_lineup.len() as f64
-            - defense_strength as f64 / defense_lineup.len() as f64)
-            * 0.18)
-        .clamp(15.0, 38.0);
-    if rng.gen_bool(offense_share / 100.0) {
-        match credit_weighted_rebound(lines, offense, offense_lineup, true, rng) {
-            Some(rebounder) => Rebound::Offensive(rebounder),
-            None => Rebound::None,
-        }
-    } else {
-        match credit_weighted_rebound(defense_lines, defense, defense_lineup, false, rng) {
-            Some(rebounder) => Rebound::Defensive(rebounder),
-            None => Rebound::None,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-enum Rebound {
-    Offensive(usize),
-    Defensive(usize),
-    None,
-}
-
-fn credit_weighted_rebound(
-    lines: &mut [PlayerGameStats],
-    players: &[&Player],
-    lineup: &[usize],
-    offensive: bool,
-    rng: &mut ChaCha8Rng,
-) -> Option<usize> {
-    let weights: Vec<u16> = lineup
-        .iter()
-        .map(|index| {
-            if offensive {
-                players[*index].ratings.offensive_rebounding as u16 + 5
-            } else {
-                players[*index].ratings.defensive_rebounding as u16 + 5
-            }
-        })
-        .collect();
-    let total: u16 = weights.iter().sum();
-    let mut ticket = rng.gen_range(0..total.max(1));
-    for (slot, weight) in weights.iter().enumerate() {
-        if ticket < *weight {
-            lines[lineup[slot]].rebounds += 1;
-            return Some(lineup[slot]);
-        }
-        ticket -= *weight;
-    }
-    None
-}
-
 fn add_points_to_best(lines: &mut [PlayerGameStats], points: u16) -> Option<usize> {
     let index = (0..lines.len()).max_by_key(|index| lines[*index].minutes)?;
     let line = &mut lines[index];
@@ -732,32 +935,6 @@ fn add_points_to_best(lines: &mut [PlayerGameStats], points: u16) -> Option<usiz
     line.free_throws_attempted += points;
     line.free_throws_made += points;
     Some(index)
-}
-
-fn starting_lineup(team: &Team, players: &[&Player]) -> Vec<usize> {
-    if team.starters.len() == 5 {
-        let chosen: Vec<usize> = team
-            .starters
-            .iter()
-            .filter_map(|starter_id| players.iter().position(|player| &player.id == starter_id))
-            .collect();
-        if chosen.len() == 5 {
-            return chosen;
-        }
-    }
-    auto_starting_lineup(players)
-}
-
-fn auto_starting_lineup(players: &[&Player]) -> Vec<usize> {
-    let mut lineup: Vec<usize> = (0..players.len()).collect();
-    lineup.sort_by_key(|index| {
-        (
-            std::cmp::Reverse(player_overall(players[*index])),
-            players[*index].id.as_str(),
-        )
-    });
-    lineup.truncate(5);
-    lineup
 }
 
 pub fn player_overall(player: &Player) -> u16 {
@@ -814,102 +991,6 @@ pub fn player_overall(player: &Player) -> u16 {
         ),
     };
     value / weight
-}
-
-fn usage_weight(player: &Player) -> u16 {
-    let r = &player.ratings;
-    (r.inside_scoring as u16 * 2
-        + r.three_tendency as u16
-        + r.three_point_pct as u16
-        + r.two_point_pct as u16)
-        .max(1)
-}
-
-fn target_seconds(team: &Team, players: &[&Player]) -> Vec<f64> {
-    let mut seconds = auto_target_seconds(players);
-    if team.minute_targets.is_empty() {
-        return seconds;
-    }
-    for (index, player) in players.iter().enumerate() {
-        if let Some(minutes) = team.minute_targets.get(&player.id) {
-            seconds[index] = (*minutes).min(48) as f64 * 60.0;
-        }
-    }
-    let total: f64 = seconds.iter().sum();
-    if total <= 0.0 {
-        return auto_target_seconds(players);
-    }
-    // Rescale so the rotation still fills exactly five positions of floor time.
-    let scale = 5.0 * 2880.0 / total;
-    for value in &mut seconds {
-        *value *= scale;
-    }
-    seconds
-}
-
-fn auto_target_seconds(players: &[&Player]) -> Vec<f64> {
-    let mut weights = vec![0.0; players.len()];
-    let mut ranked: Vec<usize> = (0..players.len()).collect();
-    ranked.sort_by_key(|index| {
-        (
-            std::cmp::Reverse(player_overall(players[*index])),
-            players[*index].id.as_str(),
-        )
-    });
-    for (rank, index) in ranked.into_iter().enumerate() {
-        let role_weight = if rank < 5 {
-            1.0
-        } else if rank < 9 {
-            0.65
-        } else {
-            0.2
-        };
-        weights[index] = player_overall(players[index]) as f64 * role_weight;
-    }
-    let total: f64 = weights.iter().sum();
-    if total == 0.0 {
-        weights.fill(1.0);
-    }
-    let total = weights.iter().sum::<f64>();
-    weights
-        .into_iter()
-        .map(|weight| weight / total * 5.0 * 2880.0)
-        .collect()
-}
-
-fn credit_floor_time(lineup: &[usize], seconds: &mut [f64], amount: f64) {
-    for index in lineup {
-        seconds[*index] += amount;
-    }
-}
-
-fn substitute(lineup: &mut [usize], seconds: &[f64], targets: &[f64], iteration_seconds: f64) {
-    if lineup.is_empty() {
-        return;
-    }
-    let lineup_set = lineup.to_vec();
-    let Some((on_slot, &on_index)) = lineup.iter().enumerate().max_by(|(_, left), (_, right)| {
-        (seconds[**left] - targets[**left])
-            .partial_cmp(&(seconds[**right] - targets[**right]))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    }) else {
-        return;
-    };
-    let Some(bench_index) = (0..seconds.len())
-        .filter(|index| !lineup_set.contains(index))
-        .min_by(|left, right| {
-            (seconds[*left] - targets[*left])
-                .partial_cmp(&(seconds[*right] - targets[*right]))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-    else {
-        return;
-    };
-    if seconds[on_index] - targets[on_index] >= iteration_seconds
-        && targets[bench_index] - seconds[bench_index] >= iteration_seconds
-    {
-        lineup[on_slot] = bench_index;
-    }
 }
 
 fn finalize_minutes(lines: &mut [PlayerGameStats], seconds: &[f64]) {
