@@ -1,8 +1,16 @@
 pub mod auth;
+pub mod coach;
 pub mod config;
+pub mod contracts;
+pub mod draft;
 pub mod generator;
+pub mod lineup;
+pub mod market;
 pub mod models;
+pub mod offseason;
 pub mod playoffs;
+pub mod pool;
+pub mod progression;
 pub mod repo;
 pub mod routes;
 pub mod schedule;

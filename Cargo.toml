@@ -28,3 +28,8 @@ warnings = "deny"
 
 [lints.clippy]
 all = "deny"
+
+# Season simulations in tests are CPU-heavy; light optimization keeps the
+# suite fast without hurting compile times much.
+[profile.dev]
+opt-level = 1

@@ -1,4 +1,6 @@
 use crate::auth;
+use crate::lineup;
+use crate::market;
 use crate::models::{
     Conference, Game, GameResult, GameStatus, League, Player, PlayerGameStats, PlayerSeasonStats,
     Position, Team, TradeStatus,
@@ -60,7 +62,24 @@ pub fn app(state: AppState) -> Router {
         .route("/teams/{id}", get(team_detail))
         .route("/teams/{id}/claim", post(claim_team))
         .route("/teams/{id}/release", post(release_team))
-        .route("/teams/{id}/lineup", post(set_lineup))
+        .route("/teams/{id}/lineup", get(lineup::editor).post(lineup::save))
+        .route("/teams/{id}/lineup/suggest", post(lineup::suggest))
+        .route("/teams/{id}/waive/{player}", post(market::waive))
+        .route("/teams/{id}/resign/{player}", post(market::resign))
+        .route("/free-agents", get(market::free_agents_page))
+        .route("/free-agents/{id}/sign", post(market::sign))
+        .route("/draft", get(market::draft_page))
+        .route("/draft/pick/{id}", post(market::draft_pick))
+        .route("/draft/auto", post(market::draft_auto))
+        .route("/draft/sim", post(market::draft_sim))
+        .route("/draft/sim-all", post(market::draft_sim_all))
+        .route("/offseason", get(market::offseason_page))
+        .route("/offseason/advance", post(market::offseason_advance))
+        .route("/offseason/fa-days", post(market::offseason_fa_days))
+        .route(
+            "/league/new",
+            get(market::new_league_page).post(market::new_league),
+        )
         .route("/players/{id}", get(player_detail))
         .route("/schedule", get(schedule))
         .route("/games/{id}", get(game_detail))
@@ -105,10 +124,15 @@ async fn team_detail(
     State(state): State<AppState>,
     MaybeUser(viewer): MaybeUser,
     Path(id): Path<String>,
+    Query(flash): Query<market::Flash>,
 ) -> Response {
     let league = state.league.lock().expect("league lock").clone();
     match TeamTemplate::from_league(&league, &state.users, viewer, &id) {
-        Some(template) => render(template),
+        Some(mut template) => {
+            template.notice_error = flash.error;
+            template.notice_message = flash.message;
+            render(template)
+        }
         None => (axum::http::StatusCode::NOT_FOUND, "team not found").into_response(),
     }
 }
@@ -171,57 +195,7 @@ async fn release_team(
             .into_response();
     }
     team.owner_user_id = None;
-    team.starters.clear();
-    team.minute_targets.clear();
-    persist_and_redirect(&state, &league, &format!("/teams/{id}"))
-}
-
-/// Save starters and minute targets. The form posts repeated `starter`
-/// checkboxes plus one `min_<player_id>` field per roster player.
-async fn set_lineup(
-    State(state): State<AppState>,
-    AuthUser(user_id): AuthUser,
-    Path(id): Path<String>,
-    Form(fields): Form<Vec<(String, String)>>,
-) -> Response {
-    let mut league = state.league.lock().expect("league lock");
-    let Some(team) = league.teams.iter().find(|team| team.id == id) else {
-        return (axum::http::StatusCode::NOT_FOUND, "team not found").into_response();
-    };
-    if team.owner_user_id != Some(user_id) {
-        return (
-            axum::http::StatusCode::FORBIDDEN,
-            "you do not manage this team",
-        )
-            .into_response();
-    }
-    let roster = team.roster.clone();
-    let mut starters: Vec<String> = Vec::new();
-    let mut minute_targets = std::collections::BTreeMap::new();
-    for (name, value) in &fields {
-        if name == "starter" && roster.contains(value) && !starters.contains(value) {
-            starters.push(value.clone());
-        } else if let Some(player_id) = name.strip_prefix("min_")
-            && roster.iter().any(|id| id == player_id)
-            && let Ok(minutes) = value.trim().parse::<u16>()
-        {
-            minute_targets.insert(player_id.to_string(), minutes.min(48));
-        }
-    }
-    if starters.len() != 5 {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "pick exactly 5 starters",
-        )
-            .into_response();
-    }
-    let team = league
-        .teams
-        .iter_mut()
-        .find(|team| team.id == id)
-        .expect("team");
-    team.starters = starters;
-    team.minute_targets = minute_targets;
+    team.reset_lineup();
     persist_and_redirect(&state, &league, &format!("/teams/{id}"))
 }
 
@@ -248,6 +222,9 @@ async fn game_detail(State(state): State<AppState>, Path(id): Path<String>) -> R
 
 async fn simulate(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let mut league = state.league.lock().expect("league lock");
+    if let Some(redirect) = offseason_guard(&league) {
+        return redirect;
+    }
     let game_exists = league.schedule.iter().any(|game| game.id == id);
     if !game_exists {
         return (axum::http::StatusCode::NOT_FOUND, "game not found").into_response();
@@ -279,6 +256,9 @@ async fn sim_month(State(state): State<AppState>) -> Response {
 
 async fn reset_league(State(state): State<AppState>) -> Response {
     let mut league = state.league.lock().expect("league lock");
+    if let Some(redirect) = offseason_guard(&league) {
+        return redirect;
+    }
     if let Err(error) = state.repo.reset(&mut league) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -304,8 +284,18 @@ async fn regen_league(State(state): State<AppState>) -> Response {
     }
 }
 
+/// Games only run in the season; in the offseason send people to the
+/// offseason page instead.
+fn offseason_guard(league: &League) -> Option<Response> {
+    (league.phase != crate::models::Phase::RegularSeason)
+        .then(|| Redirect::to("/offseason").into_response())
+}
+
 fn persist_simulation(state: AppState, mutate: impl FnOnce(&mut League)) -> Response {
     let mut league = state.league.lock().expect("league lock");
+    if let Some(redirect) = offseason_guard(&league) {
+        return redirect;
+    }
     mutate(&mut league);
     if let Err(error) = state.repo.save(&league) {
         return (
@@ -336,7 +326,7 @@ fn simulate_next_dates(league: &mut League, date_count: usize) {
     }
 }
 
-fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response {
+pub(crate) fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response {
     if let Err(error) = state.repo.save(league) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -347,7 +337,7 @@ fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response
     Redirect::to(to).into_response()
 }
 
-fn owned_team_id(league: &League, user_id: Uuid) -> Option<String> {
+pub(crate) fn owned_team_id(league: &League, user_id: Uuid) -> Option<String> {
     league
         .teams
         .iter()
@@ -600,11 +590,14 @@ async fn start_playoffs_route(State(state): State<AppState>) -> Response {
 
 async fn sim_playoff_day(State(state): State<AppState>) -> Response {
     let mut league = state.league.lock().expect("league lock");
+    if let Some(redirect) = offseason_guard(&league) {
+        return redirect;
+    }
     advance_playoff_day(&mut league, SimConfig::default());
     persist_and_redirect(&state, &league, "/playoffs")
 }
 
-fn render<T: Template>(template: T) -> Response {
+pub(crate) fn render<T: Template>(template: T) -> Response {
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(error) => (
@@ -625,6 +618,7 @@ struct IndexTemplate {
     games: usize,
     played: usize,
     leaders: Vec<TeamRow>,
+    phase: String,
 }
 
 impl IndexTemplate {
@@ -653,6 +647,7 @@ impl IndexTemplate {
                 .filter(|game| game.status == GameStatus::Played)
                 .count(),
             leaders,
+            phase: league.phase.to_string(),
         }
     }
 }
@@ -749,16 +744,14 @@ struct TeamTemplate {
     viewer_owns: bool,
     can_claim: bool,
     can_propose: bool,
-    lineup: Vec<LineupRow>,
-}
-
-struct LineupRow {
-    id: String,
-    name: String,
-    position: String,
-    overall: u8,
-    starter: bool,
-    minutes: String,
+    lineup_summary: String,
+    payroll: String,
+    cap: String,
+    room: String,
+    payroll_pct: u32,
+    roster_len: usize,
+    notice_error: String,
+    notice_message: String,
 }
 
 impl TeamTemplate {
@@ -788,24 +781,11 @@ impl TeamTemplate {
             .unwrap_or_default();
         let viewer_team = viewer.and_then(|user_id| owned_team_id(league, user_id));
         let viewer_owns = viewer.is_some() && team.owner_user_id == viewer;
-        let mut lineup: Vec<LineupRow> = team
-            .roster
-            .iter()
-            .filter_map(|player_id| league.players.iter().find(|player| &player.id == player_id))
-            .map(|player| LineupRow {
-                id: player.id.clone(),
-                name: player.name.clone(),
-                position: position_name(player.position),
-                overall: player_overall(player) as u8,
-                starter: team.starters.contains(&player.id),
-                minutes: team
-                    .minute_targets
-                    .get(&player.id)
-                    .map(|minutes| minutes.to_string())
-                    .unwrap_or_default(),
-            })
-            .collect();
-        lineup.sort_by(|a, b| b.overall.cmp(&a.overall).then_with(|| a.id.cmp(&b.id)));
+        let lineup_summary = match team.mode() {
+            crate::models::LineupMode::Auto => "Auto rotation".to_string(),
+            crate::models::LineupMode::Minutes => "Custom starters & minutes".to_string(),
+            crate::models::LineupMode::Chart => "Rotation chart".to_string(),
+        };
         Some(Self {
             team: TeamRow::from_team(league, team),
             players,
@@ -815,7 +795,16 @@ impl TeamTemplate {
             viewer_owns,
             can_claim: viewer.is_some() && team.owner_user_id.is_none() && viewer_team.is_none(),
             can_propose: team.owner_user_id.is_some() && !viewer_owns && viewer_team.is_some(),
-            lineup,
+            lineup_summary,
+            payroll: crate::contracts::fmt_m(crate::contracts::payroll(league, &team.id)),
+            cap: crate::contracts::fmt_m(crate::config::SALARY_CAP),
+            room: crate::contracts::fmt_m(crate::contracts::cap_room(league, &team.id)),
+            payroll_pct: (crate::contracts::payroll(league, &team.id) as u64 * 100
+                / crate::config::SALARY_CAP as u64)
+                .min(100) as u32,
+            roster_len: team.roster.len(),
+            notice_error: String::new(),
+            notice_message: String::new(),
         })
     }
 }
@@ -1072,17 +1061,91 @@ impl PlayoffsTemplate {
 #[template(path = "player.html")]
 struct PlayerTemplate {
     player: PlayerRow,
-    team: TeamRow,
+    has_team: bool,
+    team_id: String,
+    team_name: String,
+    status: String,
+    contract: String,
+    scouted: bool,
+    drafted: String,
+    history: Vec<HistoryLine>,
+}
+
+struct HistoryLine {
+    season: u16,
+    age: u8,
+    team: String,
+    overall: u16,
+    games: u16,
+    ppg: String,
+    rpg: String,
+    apg: String,
 }
 
 impl PlayerTemplate {
     fn from_league(league: &League, id: &str) -> Option<Self> {
         let player = league.players.iter().find(|player| player.id == id)?;
-        let team = league.teams.iter().find(|team| team.id == player.team_id)?;
+        let team = league.teams.iter().find(|team| team.id == player.team_id);
         let season_stats = player_season_stats(league);
+        let mut row = PlayerRow::from_player(player, season_stats.get(&player.id));
+        let scouted = player.status == crate::models::PlayerStatus::Prospect;
+        if scouted {
+            row.overall = crate::draft::scouted_overall(player) as u8;
+        }
+        let status = match player.status {
+            crate::models::PlayerStatus::Active => "Active",
+            crate::models::PlayerStatus::FreeAgent => "Free agent",
+            crate::models::PlayerStatus::Prospect => "Draft prospect",
+            crate::models::PlayerStatus::Retired => "Retired",
+        }
+        .to_string();
+        let contract = match player.contract {
+            Some(c) if c.years_left == 0 => {
+                format!("${}M, expiring", crate::contracts::fmt_m(c.salary))
+            }
+            Some(c) => format!(
+                "${}M for {} more season(s)",
+                crate::contracts::fmt_m(c.salary),
+                c.years_left
+            ),
+            None => match player.status {
+                crate::models::PlayerStatus::FreeAgent => format!(
+                    "Asking ${}M",
+                    crate::contracts::fmt_m(crate::contracts::ask_salary(player, league.fa_day))
+                ),
+                _ => "-".to_string(),
+            },
+        };
+        let tenth = |value: u16| format!("{}.{}", value / 10, value % 10);
         Some(Self {
-            player: PlayerRow::from_player(player, season_stats.get(&player.id)),
-            team: TeamRow::from_team(league, team),
+            player: row,
+            has_team: team.is_some(),
+            team_id: team.map(|t| t.id.clone()).unwrap_or_default(),
+            team_name: team
+                .map(|t| format!("{} {}", t.city, t.name))
+                .unwrap_or_else(|| status.clone()),
+            status,
+            contract,
+            scouted,
+            drafted: player
+                .draft_year
+                .map(|year| format!("Draft class of {year}"))
+                .unwrap_or_default(),
+            history: player
+                .history
+                .iter()
+                .rev()
+                .map(|line| HistoryLine {
+                    season: line.season,
+                    age: line.age,
+                    team: line.team.clone(),
+                    overall: line.overall,
+                    games: line.games,
+                    ppg: tenth(line.ppg),
+                    rpg: tenth(line.rpg),
+                    apg: tenth(line.apg),
+                })
+                .collect(),
         })
     }
 }
@@ -1324,6 +1387,10 @@ struct PlayerRow {
     offensive_rebounding: u8,
     defensive_rebounding: u8,
     overall: u8,
+    potential: u16,
+    endurance: u8,
+    salary: String,
+    contract_years: String,
     games: u16,
     minutes: u16,
     points: u16,
@@ -1365,6 +1432,22 @@ impl PlayerRow {
             offensive_rebounding: player.ratings.offensive_rebounding,
             defensive_rebounding: player.ratings.defensive_rebounding,
             overall,
+            potential: crate::draft::scouted_potential(player),
+            endurance: player.ratings.endurance,
+            salary: player
+                .contract
+                .map(|c| crate::contracts::fmt_m(c.salary))
+                .unwrap_or_else(|| "-".to_string()),
+            contract_years: player
+                .contract
+                .map(|c| {
+                    if c.years_left == 0 {
+                        "exp".to_string()
+                    } else {
+                        c.years_left.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string()),
             games: stats.games,
             minutes: stats.minutes,
             points: stats.points,
@@ -1610,7 +1693,7 @@ fn made_attempted(made: u16, attempted: u16) -> String {
     format!("{made}-{attempted}")
 }
 
-fn position_name(position: Position) -> String {
+pub(crate) fn position_name(position: Position) -> String {
     position.to_string()
 }
 

@@ -27,6 +27,12 @@ pin the same version.
 | Run server | `cargo run` (:3000), or `./dev.sh` to restart on file change |
 | Everything CI runs | `mise run check` |
 
+## Diagnostics
+
+`cargo test --test tuning -- --ignored --nocapture` prints league-wide box-score
+averages, the player-pool/payroll shape and win-total spread; use it after
+touching `src/sim.rs`, `src/coach.rs` or `src/pool.rs`.
+
 ## Notes
 
 - `warnings = "deny"` and `clippy::all = "deny"` are set in `Cargo.toml`; a

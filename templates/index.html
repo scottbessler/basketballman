@@ -17,13 +17,16 @@
       <a href="/schedule">Schedule</a>
       <a href="/playoffs">Playoffs</a>
       <a href="/trades">Trades</a>
+      <a href="/free-agents">Free Agents</a>
+      <a href="/draft">Draft</a>
+      <a href="/offseason">Offseason</a>
       <a href="/me">My Team</a>
     </div>
   </nav>
   <main class="page">
     <section class="panel hero">
       <div>
-        <p class="eyebrow">Season {{ season }}</p>
+        <p class="eyebrow">Season {{ season }} &middot; <a href="/offseason">{{ phase }}</a></p>
         <h1>{{ league_name }}</h1>
       </div>
       <div class="status">{{ played }} / {{ games }} games played</div>

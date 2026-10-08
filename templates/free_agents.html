@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free Agents - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+{% include "nav.html" %}
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">{{ phase }}{% if fa_day > 0 %} &middot; day {{ fa_day }}{% endif %}</p>
+        <h1>Free Agents</h1>
+      </div>
+      {% if has_team %}
+      <div class="status">{{ team_name }}: payroll ${{ payroll }}M of ${{ cap }}M &middot; room ${{ room }}M &middot; {{ roster_len }}/{{ roster_max }} players</div>
+      {% endif %}
+    </section>
+    {% if error != "" %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
+    {% if message != "" %}<div class="banner ok">{{ message }}</div>{% endif %}
+    <section class="panel">
+      <p class="muted">Hard salary cap: a signing that does not fit under ${{ cap }}M is refused. Asking prices fall about 1.2% per day of free agency (down to 60%), so waiting can pay off &mdash; if no one else signs the player first.{% if !has_team %} <a href="/login">Sign in</a> and claim a team to sign players.{% endif %}</p>
+      <div class="table-wrap compact">
+        <table class="sortable" data-default-sort-index="3" data-default-sort-dir="desc">
+          <thead><tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>POT</th><th>END</th><th>Ask ($M)</th>{% if can_sign %}<th>Sign</th>{% endif %}</tr></thead>
+          <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><a href="/players/{{ row.id }}">{{ row.name }}</a></td>
+              <td>{{ row.position }}</td>
+              <td>{{ row.age }}</td>
+              <td>{{ row.overall }}</td>
+              <td>{{ row.potential }}</td>
+              <td>{{ row.endurance }}</td>
+              <td>{{ row.ask }}</td>
+              {% if can_sign %}
+              <td>
+                <form method="post" action="/free-agents/{{ row.id }}/sign" class="inline-form">
+                  <select name="years" aria-label="Contract years">
+                    {% for opt in row.options %}<option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.value }}y</option>{% endfor %}
+                  </select>
+                  <button type="submit" class="{% if !row.affordable %}secondary{% endif %}" {% if !row.affordable %}title="Not enough cap room"{% endif %}>Sign</button>
+                </form>
+              </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

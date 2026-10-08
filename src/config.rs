@@ -9,6 +9,17 @@ pub struct TeamSeed {
 }
 
 pub const ROSTER_SIZE: usize = 12;
+/// Smallest legal roster at the start of a season.
+pub const ROSTER_MIN: usize = 12;
+pub const ROSTER_MAX: usize = 15;
+/// Players each team drafts in a fantasy draft.
+pub const FANTASY_ROUNDS: usize = 13;
+pub const DRAFT_ROUNDS: usize = 2;
+pub const PROSPECT_CLASS_SIZE: usize = 72;
+/// Hard salary cap, min and max contract, in thousands of dollars per year.
+pub const SALARY_CAP: u32 = 150_000;
+pub const MIN_SALARY: u32 = 1_200;
+pub const MAX_SALARY: u32 = 52_000;
 pub const DEFAULT_SEASON: u16 = 2027;
 
 pub const NBA_NICKNAMES: &[&str] = &[

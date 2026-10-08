@@ -17,16 +17,28 @@
       <a href="/schedule">Schedule</a>
       <a href="/playoffs">Playoffs</a>
       <a href="/trades">Trades</a>
+      <a href="/free-agents">Free Agents</a>
+      <a href="/draft">Draft</a>
+      <a href="/offseason">Offseason</a>
       <a href="/me">My Team</a>
     </div>
   </nav>
   <main class="page player">
     <section class="panel hero compact">
       <div>
-        <p class="eyebrow"><a href="/teams/{{ team.id }}">{{ team.city }} {{ team.name }}</a> · {{ player.position }}</p>
+        <p class="eyebrow">{% if has_team %}<a href="/teams/{{ team_id }}">{{ team_name }}</a>{% else %}{{ team_name }}{% endif %} · {{ player.position }} · {{ player.age }}y</p>
         <h1>{{ player.name }}</h1>
       </div>
-      <div class="status">OVR {{ player.overall }}</div>
+      <div class="status">OVR {{ player.overall }}{% if scouted %}?{% endif %} · POT {{ player.potential }}{% if scouted %}?{% endif %}</div>
+    </section>
+    <section class="panel">
+      <div class="stat-line">
+        <span><strong>Status</strong> {{ status }}</span>
+        <span><strong>Contract</strong> {{ contract }}</span>
+        <span><strong>Endurance</strong> {{ player.endurance }}</span>
+        {% if drafted != "" %}<span>{{ drafted }}</span>{% endif %}
+      </div>
+      {% if scouted %}<p class="muted">Scouting grades for prospects are estimates; true ability is revealed once drafted.</p>{% endif %}
     </section>
     <section class="stat-grid">
       <div class="panel"><span>{{ player.points }}</span><label>Points</label></div>
@@ -59,6 +71,21 @@
         </table>
       </div>
     </section>
+    {% if !history.is_empty() %}
+    <section class="panel">
+      <h2>Career</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Season</th><th>Age</th><th>Team</th><th>OVR</th><th>GP</th><th>PPG</th><th>RPG</th><th>APG</th></tr></thead>
+          <tbody>
+          {% for line in history %}
+            <tr><td>{{ line.season }}</td><td>{{ line.age }}</td><td>{{ line.team }}</td><td>{{ line.overall }}</td><td>{{ line.games }}</td><td>{{ line.ppg }}</td><td>{{ line.rpg }}</td><td>{{ line.apg }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
     <section class="panel">
       <h2>Ratings</h2>
       <div class="table-wrap">
