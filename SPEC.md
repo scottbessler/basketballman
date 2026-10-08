@@ -24,6 +24,19 @@ C16: game page ! schedule game clickable; played game shows box score; unplayed 
 C17: sim engine ! pure function over scheduled game input; engine owns no league loading/persistence.
 C18: alt sim engine ! possession-by-possession engine chooses events from ratings, returns same `GameResult` contract.
 
+C19: rotation ! 3 modes per team: `Auto` (coach AI), `Minutes` (starters + minute targets), `Chart` (explicit 12×4-min on-court grid, 5/block).
+C20: coach sliders ! foul_caution, starter_load, depth, fatigue_tolerance, + toggles closers/blowout_bench/stagger_stars; apply in all modes (fouls + blowout always; fatigue subs in Auto/Minutes only).
+C21: fatigue ! energy 0-100 per player per game; drains on floor by endurance/pace/pressure, recovers on bench; ratings × (0.72+0.28·energy/100).
+C22: fouls ! defenders accrue personal fouls; 6 = out; coach benches players in foul trouble by quarter limit [2,3,4,5] shifted by foul_caution; clutch (Q4 close) players stay until 5.
+C23: strategy sliders (0-100, 50 neutral) ! offense: pace, three_rate, ball_movement, offensive_glass; defense: pressure, interior_focus, defensive_glass. Each has a cost + benefit.
+C24: lineup UX ! SSR form works w/o JS; JS adds touch+mouse drag reorder + paint-drag chart, live 5-per-block validation.
+C25: progression ! offseason; age curve peaks 25-27, decline from ~29, steep ≥34; athletic ratings age ~3y earlier than skill ratings; `potential` steers young growth; retirement.
+C26: contracts ! `salary` ($K/yr) + `years_left`; hard cap (no signing/trade/draft pick may put payroll > cap); min/max contract; rookie scale.
+C27: free agency ! pool of unsigned players; ask = market value; owner signs if cap+roster allow; AI teams sign by value/need; roster 12-15.
+C28: draft ! prospects (age 19-22) w/ scouting fuzz; 2 rounds; order = lottery (non-playoff) then record; AI auto-picks, owners pick manually.
+C29: offseason phases ! Regular → Playoffs → Draft → Resign → FreeAgency → Regular (next season; new schedule, results archived to history).
+C30: new league ! pool of NBA-shaped players (few superstars, many role players); either auto-assigned or fantasy draft (snake, cap-aware: pick must leave room to fill roster at min salary).
+
 §I
 model: `League` → teams, players, schedule, results, config, seed.
 model: `Team` → id, city, name, conference, division, roster.
@@ -107,6 +120,19 @@ T18|x|test reset/regen/box-score invariants|V13,V19,V20,V21
 T19|x|extract pure game engine interface + rating-roll engine|C17,I.model,I.svc,V23,V24
 T20|x|add possession-by-possession engine|C18,I.svc,V24,V25
 T21|x|wire web simulation through engine interface + tests|I.web,V10,V13,V23,V24,V25
+T22|.|endurance rating + in-game fatigue energy/skill penalty|C21
+T23|.|personal fouls + foul-out|C22
+T24|.|team strategy sliders offense/defense in sim|C23
+T25|.|coach: auto/minutes/chart substitution engine + coach sliders + auto chart builder|C19,C20,C22
+T26|.|lineup editor page: depth drag/drop, paint-drag chart, sliders; mobile/touch|C24
+T27|.|NBA-shaped player pool generator (tiers, archetypes, ages, potential)|C30
+T28|.|contracts + hard cap + payroll UI; trades obey cap|C26
+T29|.|free agency: pool, sign, waive, AI signings, roster limits|C27
+T30|.|age-based progression + retirement + player history|C25
+T31|.|prospect classes + scouting fuzz + lottery + rookie draft|C28
+T32|.|offseason phase flow + season rollover|C29
+T33|.|new-league flow w/ fantasy draft (cap-aware)|C30
+T34|.|tests + docs for all of the above|V26..
 
 §B
 id|date|cause|fix
