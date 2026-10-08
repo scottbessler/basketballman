@@ -98,8 +98,7 @@ fn move_players(league: &mut League, player_ids: &[PlayerId], from: &TeamId, to:
     for player_id in player_ids {
         if let Some(team) = league.teams.iter_mut().find(|team| &team.id == from) {
             team.roster.retain(|id| id != player_id);
-            team.starters.retain(|id| id != player_id);
-            team.minute_targets.remove(player_id);
+            team.forget_player(player_id);
         }
         if let Some(team) = league.teams.iter_mut().find(|team| &team.id == to) {
             team.roster.push(player_id.clone());

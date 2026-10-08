@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lineup - {{ team_name }} - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/lineup.js"></script>
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Basketballman</a>
+    <div class="nav-section">
+      <span class="nav-label">League</span>
+      <a href="/standings">Standings</a>
+      <a href="/teams">Teams</a>
+      <a href="/schedule">Schedule</a>
+      <a href="/playoffs">Playoffs</a>
+      <a href="/trades">Trades</a>
+      <a href="/me">My Team</a>
+    </div>
+  </nav>
+  <main class="page lineup-page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow"><a href="/teams/{{ team_id }}">&larr; {{ team_name }}</a></p>
+        <h1>Lineup &amp; Strategy</h1>
+      </div>
+    </section>
+    {% if error != "" %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
+    {% if saved %}<div class="banner ok">Saved.</div>{% endif %}
+    <div class="banner error" role="alert" data-lineup-error hidden></div>
+
+    <form method="post" action="/teams/{{ team_id }}/lineup" data-lineup-form>
+      <input type="hidden" name="coach_form" value="1">
+
+      <section class="panel">
+        <h2>Rotation mode</h2>
+        <div class="mode-picker" role="radiogroup" aria-label="Rotation mode">
+          <label class="mode-card">
+            <input type="radio" name="mode" value="auto" {% if mode == "auto" %}checked{% endif %}>
+            <strong>Auto</strong>
+            <span>Your coach builds the rotation: best five start, minutes follow talent, fatigue and foul trouble. Tune it with the coach sliders.</span>
+          </label>
+          <label class="mode-card">
+            <input type="radio" name="mode" value="minutes" {% if mode == "minutes" %}checked{% endif %}>
+            <strong>Minutes</strong>
+            <span>You pick the starters and a minute budget per player; the coach finds the substitutions.</span>
+          </label>
+          <label class="mode-card">
+            <input type="radio" name="mode" value="chart" {% if mode == "chart" %}checked{% endif %}>
+            <strong>Chart</strong>
+            <span>You paint exactly who plays in each 4-minute block. Only fouls, blowouts and ejections override you.</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" id="depth" data-for-modes="minutes auto">
+        <div class="section-head">
+          <h2>Starters &amp; bench</h2>
+          <span class="muted" data-minutes-total></span>
+        </div>
+        <p class="muted">Drag <span class="handle-hint">&#x2807;</span> to reorder. The top five start. Minute targets are scaled to fit 240.</p>
+        <ol class="depth" data-depth>
+        {% for row in rows %}
+          <li class="depth-row{% if row.starter %} starter{% endif %}" data-player="{{ row.id }}">
+            <input type="hidden" name="order" value="{{ row.id }}">
+            <span class="handle" title="Drag to reorder" aria-hidden="true">&#x2807;</span>
+            <span class="slot" aria-hidden="true"></span>
+            <span class="who"><a href="/players/{{ row.id }}">{{ row.name }}</a><small>{{ row.position }} &middot; {{ row.age }}y &middot; END {{ row.endurance }}</small></span>
+            <span class="ovr" title="Overall">{{ row.overall }}</span>
+            <label class="mins"><input type="number" name="min_{{ row.id }}" value="{{ row.minutes }}" min="0" max="48" inputmode="numeric" aria-label="Minutes for {{ row.name }}"><span>min</span></label>
+            <span class="moves">
+              <button type="submit" name="move" value="up:{{ row.id }}" class="icon" aria-label="Move {{ row.name }} up" data-move="up">&uarr;</button>
+              <button type="submit" name="move" value="down:{{ row.id }}" class="icon" aria-label="Move {{ row.name }} down" data-move="down">&darr;</button>
+            </span>
+          </li>
+        {% endfor %}
+        </ol>
+      </section>
+
+      <section class="panel" id="chart" data-for-modes="chart">
+        <div class="section-head">
+          <h2>Rotation chart</h2>
+          <span class="muted">{% if chart_is_saved %}Saved chart{% else %}Suggested chart &mdash; not saved yet{% endif %}</span>
+        </div>
+        <p class="muted">Tap a cell, or press and drag along a player&rsquo;s row, to put them on the floor. Every 4-minute block needs exactly five players.</p>
+        <div class="chart-wrap">
+          <table class="chart" data-chart>
+            <thead>
+              <tr>
+                <th rowspan="2" class="who-col">Player</th>
+                {% for q in quarters %}<th colspan="3" class="qhead">{{ q.label }}</th>{% endfor %}
+                <th rowspan="2" class="min-col">MIN</th>
+              </tr>
+              <tr>
+                {% for b in block_numbers %}<th class="blk">{{ b * 4 }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+            {% for row in chart_rows %}
+              <tr data-player="{{ row.id }}">
+                <th class="who-col" scope="row" title="{{ row.name }}">{{ row.short_name }} <small>{{ row.position }}</small></th>
+                {% for cell in row.cells %}
+                <td class="cell{% if cell.block % 3 == 2 %} q-end{% endif %}"><input type="checkbox" name="chart_{{ cell.block }}" value="{{ row.id }}" aria-label="{{ row.name }} block {{ cell.block }}" {% if cell.on %}checked{% endif %}></td>
+                {% endfor %}
+                <td class="min-col" data-row-minutes>{{ row.minutes }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th class="who-col">On floor</th>
+                {% for b in block_numbers %}<td class="count" data-block-count="{{ b }}"></td>{% endfor %}
+                <td class="min-col"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="actions">
+          <button type="submit" formaction="/teams/{{ team_id }}/lineup/suggest" formnovalidate class="secondary">Suggest rotation</button>
+          <button type="button" class="secondary" data-chart-clear>Clear chart</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Offense</h2>
+        <div class="sliders">
+        {% for s in offense %}
+          <div class="slider">
+            <label for="s-{{ s.name }}">{{ s.label }}</label>
+            <div class="slider-row"><span class="ends">{{ s.low }}</span><input id="s-{{ s.name }}" type="range" name="{{ s.name }}" min="{{ s.min }}" max="{{ s.max }}" value="{{ s.value }}"><span class="ends right">{{ s.high }}</span></div>
+            <output for="s-{{ s.name }}">{{ s.value }}</output>
+          </div>
+        {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Defense</h2>
+        <div class="sliders">
+        {% for s in defense %}
+          <div class="slider">
+            <label for="s-{{ s.name }}">{{ s.label }}</label>
+            <div class="slider-row"><span class="ends">{{ s.low }}</span><input id="s-{{ s.name }}" type="range" name="{{ s.name }}" min="{{ s.min }}" max="{{ s.max }}" value="{{ s.value }}"><span class="ends right">{{ s.high }}</span></div>
+            <output for="s-{{ s.name }}">{{ s.value }}</output>
+          </div>
+        {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Coach</h2>
+        <p class="muted">How your coach substitutes in every mode. Fatigue lowers a player&rsquo;s skills, so depth matters.</p>
+        <div class="sliders">
+        {% for s in coach %}
+          <div class="slider">
+            <label for="s-{{ s.name }}">{{ s.label }}</label>
+            <div class="slider-row"><span class="ends">{{ s.low }}</span><input id="s-{{ s.name }}" type="range" name="{{ s.name }}" min="{{ s.min }}" max="{{ s.max }}" value="{{ s.value }}"><span class="ends right">{{ s.high }}</span></div>
+            <output for="s-{{ s.name }}">{{ s.value }}</output>
+          </div>
+        {% endfor %}
+        </div>
+        <div class="toggles">
+        {% for t in toggles %}
+          <label class="toggle"><input type="checkbox" name="{{ t.name }}" value="1" {% if t.checked %}checked{% endif %}> {{ t.label }}</label>
+        {% endfor %}
+        </div>
+      </section>
+
+      <div class="actions sticky-actions">
+        <button type="submit" class="button primary">Save</button>
+        <button type="submit" name="reset" value="1" class="secondary" formnovalidate>Reset to Auto</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

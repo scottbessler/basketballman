@@ -72,6 +72,31 @@ pub enum LineupMode {
 }
 
 impl Team {
+    /// Drop every lineup reference to a player who left the roster.
+    pub fn forget_player(&mut self, player_id: &str) {
+        self.starters.retain(|id| id != player_id);
+        self.bench_order.retain(|id| id != player_id);
+        self.minute_targets.remove(player_id);
+        if self
+            .chart
+            .iter()
+            .any(|block| block.iter().any(|id| id == player_id))
+        {
+            self.chart.clear();
+        }
+    }
+
+    /// Back to hands-off: Auto mode, neutral sliders, no saved plan.
+    pub fn reset_lineup(&mut self) {
+        self.lineup_mode = Some(LineupMode::Auto);
+        self.starters.clear();
+        self.bench_order.clear();
+        self.minute_targets.clear();
+        self.chart.clear();
+        self.strategy = TeamStrategy::default();
+        self.coach = CoachSettings::default();
+    }
+
     /// Effective lineup mode: old saves with custom starters behave as `Minutes`.
     pub fn mode(&self) -> LineupMode {
         match self.lineup_mode {

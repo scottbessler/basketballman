@@ -2,6 +2,7 @@ pub mod auth;
 pub mod coach;
 pub mod config;
 pub mod generator;
+pub mod lineup;
 pub mod models;
 pub mod playoffs;
 pub mod repo;

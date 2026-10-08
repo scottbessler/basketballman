@@ -512,3 +512,391 @@ textarea {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
 }
+
+/* ---- lineup editor ---- */
+.banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.banner.error {
+  background: #fdecea;
+  color: var(--bad);
+  border: 1px solid #f5c2bd;
+}
+
+.banner.ok {
+  background: #e6f4ec;
+  color: var(--good);
+  border: 1px solid #b7dfc6;
+}
+
+.lineup-page .panel {
+  margin-bottom: 14px;
+}
+
+.lineup-page.mode-auto [data-for-modes]:not([data-for-modes~="auto"]),
+.lineup-page.mode-minutes [data-for-modes]:not([data-for-modes~="minutes"]),
+.lineup-page.mode-chart [data-for-modes]:not([data-for-modes~="chart"]) {
+  opacity: 0.55;
+}
+
+.mode-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mode-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mode-card span {
+  color: var(--muted);
+}
+
+.mode-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mode-card:has(input:checked) {
+  border-color: var(--button);
+  background: #fdf3f2;
+}
+
+.mode-card:has(input:focus-visible) {
+  outline: 2px solid var(--button);
+  outline-offset: 2px;
+}
+
+ol.depth {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: slot;
+}
+
+.depth-row {
+  display: grid;
+  grid-template-columns: 28px 26px minmax(0, 1fr) 34px 78px 56px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  counter-increment: slot;
+}
+
+.depth-row.starter {
+  background: #f6faf7;
+}
+
+.depth-row.starter + .depth-row:not(.starter) {
+  border-top: 2px solid var(--ink);
+}
+
+.depth-row.dragging {
+  position: relative;
+  z-index: 5;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  background: #fff8e6;
+}
+
+.slot::before {
+  content: counter(slot);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.depth-row.starter .slot::before {
+  content: "S" counter(slot);
+  color: var(--good);
+}
+
+.handle {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background: #f4f6f7;
+}
+
+.handle-hint {
+  font-weight: 700;
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.who a,
+.who small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ovr {
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mins {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mins input {
+  width: 46px;
+  padding: 6px 4px;
+  font-size: 16px;
+  text-align: right;
+}
+
+.moves {
+  display: flex;
+  gap: 3px;
+}
+
+button.icon {
+  min-width: 26px;
+  height: 30px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.js .moves {
+  display: none;
+}
+
+.js .depth-row {
+  grid-template-columns: 36px 26px minmax(0, 1fr) 34px 78px;
+}
+
+.chart-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+table.chart {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  min-width: 330px;
+  font-size: 12px;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+table.chart th,
+table.chart td {
+  padding: 0;
+  text-align: center;
+}
+
+table.chart .who-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 76px;
+  padding: 0 4px;
+  background: var(--panel);
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+table.chart .who-col small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+table.chart .min-col {
+  min-width: 28px;
+  padding: 0 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+table.chart .qhead {
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+table.chart .blk {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+table.chart td.cell {
+  height: 26px;
+  min-width: 19px;
+  border: 1px solid var(--line);
+  border-width: 1px 0 0 1px;
+}
+
+table.chart td.cell.q-end {
+  border-right: 1px solid var(--ink);
+}
+
+table.chart td.cell input {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+table.chart td.cell input:checked {
+  background: var(--good);
+}
+
+table.chart td.cell input:focus-visible {
+  outline: 2px solid var(--button);
+  outline-offset: -2px;
+}
+
+table.chart td.count {
+  padding: 3px 0;
+  font-weight: 800;
+  color: var(--good);
+}
+
+table.chart td.count.bad {
+  color: var(--bad);
+  background: #fdecea;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 10px 0;
+  background: linear-gradient(transparent, var(--bg) 30%);
+}
+
+.button.primary,
+button.primary {
+  background: var(--button);
+  color: #fff;
+}
+
+.sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+}
+
+.slider label {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 1.4fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.slider input[type="range"] {
+  width: 100%;
+  min-height: 32px;
+  accent-color: var(--button);
+}
+
+.slider .ends {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.15;
+}
+
+.slider .ends.right {
+  text-align: right;
+}
+
+.slider output {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--button);
+}
+
+@media (max-width: 700px) {
+  .mode-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .sliders {
+    grid-template-columns: 1fr;
+  }
+
+  .depth-row {
+    grid-template-columns: 28px 22px minmax(0, 1fr) 30px 70px 52px;
+    gap: 4px;
+  }
+
+  .js .depth-row {
+    grid-template-columns: 36px 22px minmax(0, 1fr) 30px 70px;
+  }
+}

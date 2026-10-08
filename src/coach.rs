@@ -116,6 +116,11 @@ impl Rotation {
         }
     }
 
+    /// Roster indices best to worst by overall.
+    pub fn ranked(&self) -> &[usize] {
+        &self.rank
+    }
+
     /// Roster indices of the five who open the game.
     pub fn opening_lineup(&self) -> Vec<usize> {
         self.starters.clone()

@@ -1,4 +1,5 @@
 use crate::auth;
+use crate::lineup;
 use crate::models::{
     Conference, Game, GameResult, GameStatus, League, Player, PlayerGameStats, PlayerSeasonStats,
     Position, Team, TradeStatus,
@@ -60,7 +61,8 @@ pub fn app(state: AppState) -> Router {
         .route("/teams/{id}", get(team_detail))
         .route("/teams/{id}/claim", post(claim_team))
         .route("/teams/{id}/release", post(release_team))
-        .route("/teams/{id}/lineup", post(set_lineup))
+        .route("/teams/{id}/lineup", get(lineup::editor).post(lineup::save))
+        .route("/teams/{id}/lineup/suggest", post(lineup::suggest))
         .route("/players/{id}", get(player_detail))
         .route("/schedule", get(schedule))
         .route("/games/{id}", get(game_detail))
@@ -171,57 +173,7 @@ async fn release_team(
             .into_response();
     }
     team.owner_user_id = None;
-    team.starters.clear();
-    team.minute_targets.clear();
-    persist_and_redirect(&state, &league, &format!("/teams/{id}"))
-}
-
-/// Save starters and minute targets. The form posts repeated `starter`
-/// checkboxes plus one `min_<player_id>` field per roster player.
-async fn set_lineup(
-    State(state): State<AppState>,
-    AuthUser(user_id): AuthUser,
-    Path(id): Path<String>,
-    Form(fields): Form<Vec<(String, String)>>,
-) -> Response {
-    let mut league = state.league.lock().expect("league lock");
-    let Some(team) = league.teams.iter().find(|team| team.id == id) else {
-        return (axum::http::StatusCode::NOT_FOUND, "team not found").into_response();
-    };
-    if team.owner_user_id != Some(user_id) {
-        return (
-            axum::http::StatusCode::FORBIDDEN,
-            "you do not manage this team",
-        )
-            .into_response();
-    }
-    let roster = team.roster.clone();
-    let mut starters: Vec<String> = Vec::new();
-    let mut minute_targets = std::collections::BTreeMap::new();
-    for (name, value) in &fields {
-        if name == "starter" && roster.contains(value) && !starters.contains(value) {
-            starters.push(value.clone());
-        } else if let Some(player_id) = name.strip_prefix("min_")
-            && roster.iter().any(|id| id == player_id)
-            && let Ok(minutes) = value.trim().parse::<u16>()
-        {
-            minute_targets.insert(player_id.to_string(), minutes.min(48));
-        }
-    }
-    if starters.len() != 5 {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "pick exactly 5 starters",
-        )
-            .into_response();
-    }
-    let team = league
-        .teams
-        .iter_mut()
-        .find(|team| team.id == id)
-        .expect("team");
-    team.starters = starters;
-    team.minute_targets = minute_targets;
+    team.reset_lineup();
     persist_and_redirect(&state, &league, &format!("/teams/{id}"))
 }
 
@@ -336,7 +288,7 @@ fn simulate_next_dates(league: &mut League, date_count: usize) {
     }
 }
 
-fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response {
+pub(crate) fn persist_and_redirect(state: &AppState, league: &League, to: &str) -> Response {
     if let Err(error) = state.repo.save(league) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -604,7 +556,7 @@ async fn sim_playoff_day(State(state): State<AppState>) -> Response {
     persist_and_redirect(&state, &league, "/playoffs")
 }
 
-fn render<T: Template>(template: T) -> Response {
+pub(crate) fn render<T: Template>(template: T) -> Response {
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(error) => (
@@ -749,16 +701,7 @@ struct TeamTemplate {
     viewer_owns: bool,
     can_claim: bool,
     can_propose: bool,
-    lineup: Vec<LineupRow>,
-}
-
-struct LineupRow {
-    id: String,
-    name: String,
-    position: String,
-    overall: u8,
-    starter: bool,
-    minutes: String,
+    lineup_summary: String,
 }
 
 impl TeamTemplate {
@@ -788,24 +731,11 @@ impl TeamTemplate {
             .unwrap_or_default();
         let viewer_team = viewer.and_then(|user_id| owned_team_id(league, user_id));
         let viewer_owns = viewer.is_some() && team.owner_user_id == viewer;
-        let mut lineup: Vec<LineupRow> = team
-            .roster
-            .iter()
-            .filter_map(|player_id| league.players.iter().find(|player| &player.id == player_id))
-            .map(|player| LineupRow {
-                id: player.id.clone(),
-                name: player.name.clone(),
-                position: position_name(player.position),
-                overall: player_overall(player) as u8,
-                starter: team.starters.contains(&player.id),
-                minutes: team
-                    .minute_targets
-                    .get(&player.id)
-                    .map(|minutes| minutes.to_string())
-                    .unwrap_or_default(),
-            })
-            .collect();
-        lineup.sort_by(|a, b| b.overall.cmp(&a.overall).then_with(|| a.id.cmp(&b.id)));
+        let lineup_summary = match team.mode() {
+            crate::models::LineupMode::Auto => "Auto rotation".to_string(),
+            crate::models::LineupMode::Minutes => "Custom starters & minutes".to_string(),
+            crate::models::LineupMode::Chart => "Rotation chart".to_string(),
+        };
         Some(Self {
             team: TeamRow::from_team(league, team),
             players,
@@ -815,7 +745,7 @@ impl TeamTemplate {
             viewer_owns,
             can_claim: viewer.is_some() && team.owner_user_id.is_none() && viewer_team.is_none(),
             can_propose: team.owner_user_id.is_some() && !viewer_owns && viewer_team.is_some(),
-            lineup,
+            lineup_summary,
         })
     }
 }
@@ -1610,7 +1540,7 @@ fn made_attempted(made: u16, attempted: u16) -> String {
     format!("{made}-{attempted}")
 }
 
-fn position_name(position: Position) -> String {
+pub(crate) fn position_name(position: Position) -> String {
     position.to_string()
 }
 

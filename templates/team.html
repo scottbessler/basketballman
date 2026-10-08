@@ -56,27 +56,12 @@
     </section>
     {% if viewer_owns %}
     <section class="panel">
-      <h2>Lineup</h2>
-      <p class="muted">Pick exactly 5 starters and set minute targets (0-48). Targets are scaled so the rotation fills 240 minutes.</p>
-      <form method="post" action="/teams/{{ team.id }}/lineup">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Starter</th><th>Player</th><th>Pos</th><th>OVR</th><th>Minutes</th></tr></thead>
-            <tbody>
-            {% for player in lineup %}
-              <tr>
-                <td><input type="checkbox" name="starter" value="{{ player.id }}" {% if player.starter %}checked{% endif %}></td>
-                <td><a href="/players/{{ player.id }}">{{ player.name }}</a></td>
-                <td>{{ player.position }}</td>
-                <td>{{ player.overall }}</td>
-                <td><input type="number" name="min_{{ player.id }}" value="{{ player.minutes }}" min="0" max="48" inputmode="numeric"></td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <button type="submit" class="button">Save Lineup</button>
-      </form>
+      <div class="section-head">
+        <h2>Lineup &amp; Strategy</h2>
+        <span class="status">{{ lineup_summary }}</span>
+      </div>
+      <p class="muted">Set your rotation (auto coach, minute targets or a 4-minute rotation chart), offensive and defensive strategy, and how your coach handles fouls and fatigue.</p>
+      <a class="button primary" href="/teams/{{ team.id }}/lineup">Edit Lineup &amp; Strategy</a>
     </section>
     {% endif %}
     <section class="panel">
