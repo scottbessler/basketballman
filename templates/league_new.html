@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New League - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+{% include "nav.html" %}
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">This replaces the current league</p>
+        <h1>New League</h1>
+      </div>
+    </section>
+    {% if error != "" %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/league/new" class="panel">
+      <div class="mode-picker" role="radiogroup" aria-label="How to build the league">
+        <label class="mode-card">
+          <input type="radio" name="mode" value="quick" checked>
+          <strong>Quick start</strong>
+          <span>The AI drafts a full NBA-shaped player pool onto 32 teams under the salary cap. Jump straight into the season.</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="mode" value="fantasy">
+          <strong>Fantasy draft</strong>
+          <span>Every team starts empty. A snake draft of {{ rounds }} rounds hands out the whole player pool &mdash; superstars included &mdash; and the hard cap limits how much talent you can stack. Claim your team first; AI teams draft for themselves.</span>
+        </label>
+      </div>
+      <p><label>Seed (optional) <input type="number" name="seed" placeholder="random" inputmode="numeric"></label></p>
+      <p class="muted">The pool has a few superstars, a thin tier of All-Stars, and a long tail of starters and role players, with realistic ages, positions and contracts. Ratings are fictional; names are generated.</p>
+      <div class="actions">
+        <button type="submit" class="button primary">Create league</button>
+        <a class="button" href="/">Cancel</a>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

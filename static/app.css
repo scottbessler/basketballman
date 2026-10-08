@@ -900,3 +900,118 @@ button.primary {
     grid-template-columns: 36px 22px minmax(0, 1fr) 30px 70px;
   }
 }
+
+/* ---- market / draft / offseason ---- */
+.inline-form {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.inline-form select {
+  padding: 4px;
+  font-size: 13px;
+}
+
+ol.clock-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+ol.clock-list li {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+ol.clock-list li.mine {
+  border-color: var(--button);
+  background: #fdf3f2;
+}
+
+ol.phase-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+ol.phase-steps li {
+  counter-increment: step;
+  padding: 4px 9px;
+  border-radius: 14px;
+  background: #f0f2f4;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+ol.phase-steps li::before {
+  content: counter(step) ". ";
+}
+
+ol.phase-steps li.current {
+  background: var(--button);
+  color: #fff;
+  font-weight: 700;
+}
+
+ul.transactions {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cap-bar {
+  height: 10px;
+  margin-top: 8px;
+  border-radius: 5px;
+  background: #e3e7eb;
+  overflow: hidden;
+}
+
+.cap-bar span {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+.stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  font-size: 14px;
+}
+
+.stat-line strong {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+/* Nav wraps instead of clipping on narrow screens. */
+.nav-section {
+  flex-wrap: wrap;
+}
+
+/* Tables with few columns should fit a phone without sideways scrolling. */
+.table-wrap.compact table {
+  min-width: 0;
+}
+
+.table-wrap.compact th,
+.table-wrap.compact td {
+  padding-right: 6px;
+  padding-left: 6px;
+}

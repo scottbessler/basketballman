@@ -211,7 +211,7 @@ pub fn start_rookie_draft(league: &mut League) {
     });
 }
 
-fn would_overspend(league: &League, team_id: &str, salary: u32) -> bool {
+pub fn would_overspend(league: &League, team_id: &str, salary: u32) -> bool {
     let roster = league
         .teams
         .iter()

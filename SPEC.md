@@ -70,6 +70,19 @@ web: POST `/league/reset` → clear results + mark schedule unplayed, persist, r
 web: POST `/league/regen` → generate new league, persist, redirect standings.
 ui: Preact islands → filters, table sorting, simulate buttons/progress.
 
+model: `Team` += `lineup_mode`, `bench_order`, `chart` (12×5), `strategy` (7 sliders), `coach` (4 sliders + 3 toggles).
+model: `Player` += `status`, `potential`, `contract {salary $K, years_left}`, `scouting_fudge`, `draft_year`, `history`; `team_id` empty when not rostered.
+model: `League` += `phase`, `draft`, `fa_day`, `history`, `transactions`.
+svc: `coach::Rotation` (modes, targets, `next_lineup`), `coach::suggest_chart`.
+svc: `contracts::{market_salary, ask_salary, sign_free_agent, resign_player, waive_player, payroll, trade_cap_ok}`.
+svc: `pool::{generate_pool, generate_prospects}` NBA-shaped players; `progression::progress_player`.
+svc: `draft::{make_pick, auto_pick, run_ai_until_human, run_all, rookie_order, fantasy_order}`.
+svc: `offseason::advance_phase` (Season → Draft → Resign → FreeAgency → next Season).
+web: GET/POST `/teams/:id/lineup` (+`/suggest`) → editor (owner only).
+web: GET `/free-agents`, POST `/free-agents/:id/sign`, POST `/teams/:id/waive/:player`, `/teams/:id/resign/:player`.
+web: GET `/draft`, POST `/draft/pick/:id`, `/draft/auto`, `/draft/sim`, `/draft/sim-all`.
+web: GET `/offseason`, POST `/offseason/advance`, `/offseason/fa-days`; GET/POST `/league/new` (quick | fantasy).
+
 §V
 V1: ∀ persisted entity → stable unique id; reload preserves ids.
 V2: default league → exactly 32 teams, 2 conferences, 16 teams/conference.
@@ -96,6 +109,15 @@ V22: ∀ schedule date_index → each team appears ≤ 1 game.
 V23: game engine simulate → pure over `GameSimulationInput`; no league load/save/mutation.
 V24: all game engines → same `GameResult` contract ∧ valid winner/player_stats/positive scores.
 V25: possession engine → team_stats.possessions > 0 ∧ player scoring sums to team scores.
+V26: lineup editor ! owner-only; invalid chart/ordering rejected with message, nothing saved; no-JS form works.
+V27: ∀ rostered player → contract; ∀ team after roster rules → 12-15 players ∧ payroll ≤ cap.
+V28: free-agent signing ⊥ cap overflow ∧ ⊥ roster > 15; asks decay ≥ 60% of market.
+V29: trades ! leave both teams ≤ cap or not adding salary.
+V30: progression → mean Δovr: 19-21 > +2.5, 26-28 ≈ 0, 30-32 < −0.7, 34+ < −2; athletic ratings decline faster than skill.
+V31: new league → top player ≥ 88, mean age 24.5-28, unique names, ≥ 50 per position; sd of team wins ≈ NBA.
+V32: rookie draft → 64 picks, top 4 from non-playoff teams, rookie scale contracts; fantasy draft → 13 rounds, cap-aware picks.
+V33: sims/reset/playoffs refuse outside Phase::RegularSeason (redirect to /offseason).
+V34: old saves migrate (contracts scaled to cap, potential, FA pool, draft class).
 
 §T
 id|status|task|cites
@@ -126,13 +148,13 @@ T24|x|team strategy sliders offense/defense in sim|C23
 T25|x|coach: auto/minutes/chart substitution engine + coach sliders + auto chart builder|C19,C20,C22
 T26|x|lineup editor page: depth drag/drop, paint-drag chart, sliders; mobile/touch|C24
 T27|x|NBA-shaped player pool generator (tiers, archetypes, ages, potential)|C30
-T28|~|contracts + hard cap + payroll UI; trades obey cap|C26
-T29|~|free agency: pool, sign, waive, AI signings, roster limits|C27
+T28|x|contracts + hard cap + payroll UI; trades obey cap|C26
+T29|x|free agency: pool, sign, waive, AI signings, roster limits|C27
 T30|x|age-based progression + retirement + player history|C25
-T31|~|prospect classes + scouting fuzz + lottery + rookie draft|C28
-T32|~|offseason phase flow + season rollover|C29
-T33|~|new-league flow w/ fantasy draft (cap-aware)|C30
-T34|.|tests + docs for all of the above|V26..
+T31|x|prospect classes + scouting fuzz + lottery + rookie draft|C28
+T32|x|offseason phase flow + season rollover|C29
+T33|x|new-league flow w/ fantasy draft (cap-aware)|C30
+T34|x|tests + docs for all of the above|V26..
 
 §B
 id|date|cause|fix

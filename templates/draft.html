@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+{% include "nav.html" %}
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">{{ eyebrow }}</p>
+        <h1>{{ title }}</h1>
+      </div>
+      {% if active %}
+      <div class="status">
+        {% if complete %}Draft complete{% else %}Pick {{ pick_number }} of {{ total_picks }} &middot; {{ clock_team }} on the clock{% endif %}
+      </div>
+      {% endif %}
+    </section>
+    {% if error != "" %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
+    {% if message != "" %}<div class="banner ok">{{ message }}</div>{% endif %}
+
+    {% if active && !complete %}
+    <section class="panel sim-panel">
+      <div>
+        {% if my_turn %}<strong>You are on the clock{% if cap_note != "" %} &middot; {{ cap_note }}{% endif %}.</strong>{% else %}<span class="muted">{% if has_team %}Waiting on {{ clock_team }}.{% else %}<a href="/login">Sign in</a> and claim a team to draft.{% endif %}</span>{% endif %}
+      </div>
+      <div class="sim-actions">
+        {% if my_turn %}<form method="post" action="/draft/auto"><button type="submit">Auto-pick for me</button></form>{% endif %}
+        <form method="post" action="/draft/sim"><button type="submit" class="secondary">Sim to next human pick</button></form>
+        <form method="post" action="/draft/sim-all" onsubmit="return confirm('Auto-draft every remaining pick, including human teams?')"><button type="submit" class="secondary">Auto-draft all</button></form>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>On the clock</h2>
+      <ol class="clock-list">
+      {% for slot in upcoming %}
+        <li{% if slot.mine %} class="mine"{% endif %}><strong>#{{ slot.number }}</strong> {{ slot.team }}</li>
+      {% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>{% if active %}Available players{% else %}Upcoming draft class{% endif %}</h2>
+        <span class="muted">{% if scouted %}Scouting grades are estimates (&plusmn; a few points); true ability is revealed after the draft.{% else %}Ratings are exact.{% endif %}</span>
+      </div>
+      <div class="table-wrap compact">
+        <table class="sortable" data-default-sort-index="{{ sort_index }}" data-default-sort-dir="desc">
+          <thead><tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>POT</th><th>END</th>{% if fantasy %}<th>Salary ($M)</th>{% endif %}{% if can_pick %}<th>Draft</th>{% endif %}</tr></thead>
+          <tbody>
+          {% for row in board %}
+            <tr>
+              <td><a href="/players/{{ row.id }}">{{ row.name }}</a></td>
+              <td>{{ row.position }}</td>
+              <td>{{ row.age }}</td>
+              <td>{{ row.overall }}</td>
+              <td>{{ row.potential }}</td>
+              <td>{{ row.endurance }}</td>
+              {% if fantasy %}<td>{{ row.salary }}</td>{% endif %}
+              {% if can_pick %}
+              <td>
+                <form method="post" action="/draft/pick/{{ row.id }}"><button type="submit" {% if !row.affordable %}class="secondary" title="Would leave no cap room to fill your roster"{% endif %}>Draft</button></form>
+              </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if has_picks %}
+    <section class="panel">
+      <h2>Picks</h2>
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>#</th><th>Team</th><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>POT</th></tr></thead>
+          <tbody>
+          {% for pick in picks %}
+            <tr>
+              <td>{{ pick.number }}</td>
+              <td><a href="/teams/{{ pick.team_id }}">{{ pick.team }}</a></td>
+              <td><a href="/players/{{ pick.player_id }}">{{ pick.player }}</a></td>
+              <td>{{ pick.position }}</td>
+              <td>{{ pick.age }}</td>
+              <td>{{ pick.overall }}</td>
+              <td>{{ pick.potential }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

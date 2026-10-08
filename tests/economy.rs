@@ -628,3 +628,57 @@ fn enforce_roster_rules_fixes_cap_and_size_problems() {
     assert_league_is_legal(&league);
     assert!(league.teams[0].roster.len() >= ROSTER_MIN);
 }
+
+#[test]
+fn trades_cannot_push_a_team_over_the_hard_cap() {
+    use basketballman::trades::{TradeError, validate_offer};
+    let mut league = generate_league(7);
+    league.teams[0].owner_user_id = Some(uuid::Uuid::new_v4());
+    league.teams[1].owner_user_id = Some(uuid::Uuid::new_v4());
+    let (a, b) = (league.teams[0].id.clone(), league.teams[1].id.clone());
+
+    // Team A sits at the cap; its cheapest player for B's priciest is illegal.
+    let a_ids = league.teams[0].roster.clone();
+    let spare = SALARY_CAP - payroll(&league, &a);
+    let first = league
+        .players
+        .iter_mut()
+        .find(|p| p.id == a_ids[0])
+        .unwrap();
+    first.contract.as_mut().unwrap().salary +=
+        spare.min(MAX_SALARY - first.contract.unwrap().salary);
+    let cheap = a_ids
+        .iter()
+        .min_by_key(|id| {
+            basketballman::contracts::contract_of(&league, id)
+                .unwrap()
+                .salary
+        })
+        .unwrap()
+        .clone();
+    let pricey = league.teams[1]
+        .roster
+        .iter()
+        .max_by_key(|id| {
+            basketballman::contracts::contract_of(&league, id)
+                .unwrap()
+                .salary
+        })
+        .unwrap()
+        .clone();
+    {
+        let p = league.players.iter_mut().find(|p| p.id == pricey).unwrap();
+        p.contract.as_mut().unwrap().salary = 30_000;
+    }
+    let result = validate_offer(
+        &league,
+        &a,
+        &b,
+        std::slice::from_ref(&cheap),
+        std::slice::from_ref(&pricey),
+    );
+    assert!(
+        matches!(result, Err(TradeError::OverCap(_))),
+        "expected cap failure, got {result:?}"
+    );
+}

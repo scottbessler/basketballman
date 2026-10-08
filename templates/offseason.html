@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offseason - Basketballman</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/islands.js"></script>
+</head>
+<body>
+{% include "nav.html" %}
+  <main class="page">
+    <section class="panel hero compact">
+      <div>
+        <p class="eyebrow">Season {{ season }}</p>
+        <h1>{{ phase }}</h1>
+      </div>
+      <div class="status">{{ phase_blurb }}</div>
+    </section>
+    {% if error != "" %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
+    {% if message != "" %}<div class="banner ok">{{ message }}</div>{% endif %}
+
+    <section class="panel sim-panel">
+      <div>
+        <h2>The yearly cycle</h2>
+        <ol class="phase-steps">
+          {% for step in steps %}<li{% if step.current %} class="current"{% endif %}>{{ step.name }}</li>{% endfor %}
+        </ol>
+      </div>
+      <div class="sim-actions">
+        {% if has_next %}
+        <form method="post" action="/offseason/advance"><button type="submit">{{ next_label }}</button></form>
+        {% endif %}
+        {% if free_agency %}
+        <form method="post" action="/offseason/fa-days"><input type="hidden" name="days" value="1"><button type="submit" class="secondary">Sim 1 FA day</button></form>
+        <form method="post" action="/offseason/fa-days"><input type="hidden" name="days" value="7"><button type="submit" class="secondary">Sim 1 FA week</button></form>
+        {% endif %}
+        <a class="button" href="/draft">Draft</a>
+        <a class="button" href="/free-agents">Free agents</a>
+      </div>
+    </section>
+
+    {% if has_expiring %}
+    <section class="panel">
+      <h2>Your expiring contracts</h2>
+      <p class="muted">Re-sign before free agency opens, or they walk. Salary is their new market price; you have ${{ room }}M of cap room.</p>
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>Player</th><th>Age</th><th>OVR</th><th>POT</th><th>Ask ($M)</th><th></th></tr></thead>
+          <tbody>
+          {% for row in expiring %}
+            <tr>
+              <td><a href="/players/{{ row.id }}">{{ row.name }}</a></td>
+              <td>{{ row.age }}</td>
+              <td>{{ row.overall }}</td>
+              <td>{{ row.potential }}</td>
+              <td>{{ row.ask }}</td>
+              <td>
+                {% if can_resign %}
+                <form method="post" action="/teams/{{ team_id }}/resign/{{ row.id }}" class="inline-form">
+                  <select name="years" aria-label="Contract years">{% for opt in row.options %}<option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.value }}y</option>{% endfor %}</select>
+                  <button type="submit" {% if !row.affordable %}class="secondary" title="Not enough cap room"{% endif %}>Re-sign</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="panel">
+      <h2>Past seasons</h2>
+      {% if history.is_empty() %}<p class="muted">No completed seasons yet.</p>{% else %}
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>Season</th><th>Champion</th><th>Best record</th><th>Scoring leader</th></tr></thead>
+          <tbody>
+          {% for row in history %}
+            <tr><td>{{ row.season }}</td><td>{{ row.champion }}</td><td>{{ row.best_record }}</td><td>{{ row.scoring_leader }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Transactions</h2>
+      {% if transactions.is_empty() %}<p class="muted">Nothing yet.</p>{% else %}
+      <ul class="transactions">
+        {% for line in transactions %}<li>{{ line }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>New league</h2>
+      <p class="muted">Start over with a brand-new league &mdash; optionally a fantasy draft.</p>
+      <a class="button" href="/league/new">Create new league&hellip;</a>
+    </section>
+  </main>
+</body>
+</html>

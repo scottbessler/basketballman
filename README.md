@@ -4,6 +4,10 @@ A basketball legacy management game: a generated NBA-shaped league with
 schedules, simulated games, box scores, standings, trades and playoffs.
 Rust (axum) with server-rendered HTML.
 
+Features: possession-level sim with fatigue, fouls and a coach AI; lineup
+strategy sliders + auto/minutes/chart rotations; contracts under a hard cap, free
+agency, a rookie draft, age-based progression and a fantasy-draft league start.
+
 Live at https://basketballman.fly.dev.
 
 ## Development

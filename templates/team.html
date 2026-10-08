@@ -17,6 +17,9 @@
       <a href="/schedule">Schedule</a>
       <a href="/playoffs">Playoffs</a>
       <a href="/trades">Trades</a>
+      <a href="/free-agents">Free Agents</a>
+      <a href="/draft">Draft</a>
+      <a href="/offseason">Offseason</a>
       <a href="/me">My Team</a>
     </div>
   </nav>
@@ -27,6 +30,15 @@
         <h1>{{ team.city }} {{ team.name }}</h1>
       </div>
       <div class="status">Rating {{ team.rating }}</div>
+    </section>
+    {% if notice_error != "" %}<div class="banner error" role="alert">{{ notice_error }}</div>{% endif %}
+    {% if notice_message != "" %}<div class="banner ok">{{ notice_message }}</div>{% endif %}
+    <section class="panel">
+      <div class="section-head">
+        <h2>Payroll</h2>
+        <span class="status">${{ payroll }}M of ${{ cap }}M &middot; ${{ room }}M room &middot; {{ roster_len }} players</span>
+      </div>
+      <div class="cap-bar" role="img" aria-label="Payroll {{ payroll_pct }}% of the hard cap"><span style="width: {{ payroll_pct }}%"></span></div>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -69,7 +81,7 @@
       <div class="table-wrap">
         <table class="sortable" data-default-sort-index="7" data-default-sort-dir="desc">
           <thead>
-            <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>FG</th><th>3PT</th><th>FT</th><th>2P%</th><th>3P%</th><th>FT%</th><th>Inside</th><th>3T</th></tr>
+            <tr><th>Player</th><th>Pos</th><th>Age</th><th>OVR</th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>FG</th><th>3PT</th><th>FT</th><th>2P%</th><th>3P%</th><th>FT%</th><th>Inside</th><th>3T</th><th>POT</th><th>END</th><th>$M</th><th>Yrs</th>{% if viewer_owns %}<th></th>{% endif %}</tr>
           </thead>
           <tbody>
           {% for player in players %}
@@ -94,6 +106,11 @@
               <td>{{ player.ft_pct }}%</td>
               <td>{{ player.inside_scoring }}</td>
               <td>{{ player.three_tendency }}</td>
+              <td>{{ player.potential }}</td>
+              <td>{{ player.endurance }}</td>
+              <td>{{ player.salary }}</td>
+              <td>{{ player.contract_years }}</td>
+              {% if viewer_owns %}<td><form method="post" action="/teams/{{ team.id }}/waive/{{ player.id }}" onsubmit="return confirm('Waive {{ player.name }}? His salary comes off your books.')"><button type="submit" class="secondary">Waive</button></form></td>{% endif %}
             </tr>
           {% endfor %}
           </tbody>
